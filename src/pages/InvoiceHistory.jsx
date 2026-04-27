@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { format } from 'date-fns';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
-import { Download, Edit, Trash2 } from 'lucide-react';
+import { Download, Edit, Trash2, CreditCard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const MONTHS = [
@@ -29,6 +29,10 @@ export default function InvoiceHistory() {
   const [filteredInvoices, setFilteredInvoices] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentInvoice, setPaymentInvoice] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
 
   const [filters, setFilters] = useState({
     customerId: '',
@@ -113,6 +117,69 @@ export default function InvoiceHistory() {
     }
   };
 
+  const handleOpenPayment = (inv) => {
+    setPaymentInvoice(inv);
+    setPaymentAmount('');
+    setPaymentModalOpen(true);
+  };
+
+  const handleSavePayment = async () => {
+    if (!paymentInvoice || !paymentAmount) return;
+    const amount = Number(paymentAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+
+    const currentPaid = paymentInvoice.amountPaid || 0;
+    const newPaid = currentPaid + amount;
+    const total = paymentInvoice.totalAmount;
+
+    if (newPaid > total) {
+      alert("Payment amount cannot exceed total balance.");
+      return;
+    }
+
+    const balanceAmount = total - newPaid;
+    let status = 'unpaid';
+    if (newPaid > 0) {
+      status = newPaid >= total ? 'paid' : 'partial';
+    }
+
+    try {
+      await updateDoc(doc(db, 'invoices', paymentInvoice.id), {
+        amountPaid: newPaid,
+        balanceAmount,
+        status
+      });
+
+      setInvoices(invoices.map(inv => 
+        inv.id === paymentInvoice.id 
+          ? { ...inv, amountPaid: newPaid, balanceAmount, status }
+          : inv
+      ));
+
+      setPaymentModalOpen(false);
+      setPaymentInvoice(null);
+      setPaymentAmount('');
+    } catch (error) {
+      console.error("Error saving payment:", error);
+      alert("Failed to save payment.");
+    }
+  };
+
+  const renderStatusBadge = (status) => {
+    switch (status) {
+      case 'paid':
+        return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#d4edda', color: '#155724', fontSize: '0.75rem', fontWeight: 'bold' }}>Paid</span>;
+      case 'partial':
+        return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#fff3cd', color: '#856404', fontSize: '0.75rem', fontWeight: 'bold' }}>Partial</span>;
+      case 'unpaid':
+      default:
+        return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#f8d7da', color: '#721c24', fontSize: '0.75rem', fontWeight: 'bold' }}>Unpaid</span>;
+    }
+  };
+
   return (
     <div>
       {/* Sticky Filters */}
@@ -176,7 +243,10 @@ export default function InvoiceHistory() {
                   <th>Invoice #</th>
                   <th>Customer</th>
                   <th>Date</th>
-                  <th>Amount</th>
+                  <th>Total</th>
+                  <th>Paid</th>
+                  <th>Balance</th>
+                  <th>Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -188,11 +258,23 @@ export default function InvoiceHistory() {
                     <td data-label="Date" style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
                       {inv.date ? format(new Date(inv.date), 'dd MMM yy') : ''}
                     </td>
-                    <td data-label="Amount" style={{ whiteSpace: 'nowrap', fontWeight: '500' }}>
+                    <td data-label="Total" style={{ whiteSpace: 'nowrap', fontWeight: '500' }}>
                       ₹{Number(inv.totalAmount).toFixed(2)}
                     </td>
+                    <td data-label="Paid" style={{ whiteSpace: 'nowrap', color: 'var(--success)' }}>
+                      ₹{Number(inv.amountPaid || 0).toFixed(2)}
+                    </td>
+                    <td data-label="Balance" style={{ whiteSpace: 'nowrap', color: 'var(--danger)' }}>
+                      ₹{Number(inv.balanceAmount ?? inv.totalAmount).toFixed(2)}
+                    </td>
+                    <td data-label="Status">
+                      {renderStatusBadge(inv.status)}
+                    </td>
                     <td data-label="Actions">
-                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button onClick={() => handleOpenPayment(inv)} className="btn-icon" title="Add Payment" style={{ color: 'var(--primary)', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                          <CreditCard size={18} />
+                        </button>
                         <button
                           onClick={() => handleDownloadPDF(inv)}
                           className="btn-icon"
@@ -217,6 +299,37 @@ export default function InvoiceHistory() {
           <p className="text-muted">No invoices match the selected filters.</p>
         )}
       </div>
+
+      {/* Payment Modal */}
+      {paymentModalOpen && paymentInvoice && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
+          <div className="card" style={{ width: '100%', maxWidth: '400px', margin: 0 }}>
+            <h3 className="card-title">Add Payment</h3>
+            <p><strong>Invoice:</strong> {paymentInvoice.invoiceNumber}</p>
+            <p><strong>Customer:</strong> {paymentInvoice.customerName}</p>
+            <p><strong>Balance:</strong> ₹{Number(paymentInvoice.balanceAmount ?? paymentInvoice.totalAmount).toFixed(2)}</p>
+            
+            <div className="form-group" style={{ marginTop: '15px' }}>
+              <label>Payment Amount (₹)</label>
+              <input
+                type="number"
+                min="1"
+                max={paymentInvoice.balanceAmount ?? paymentInvoice.totalAmount}
+                step="0.01"
+                className="form-control"
+                value={paymentAmount}
+                onChange={e => setPaymentAmount(e.target.value)}
+                autoFocus
+              />
+            </div>
+            
+            <div className="action-row" style={{ marginTop: '20px' }}>
+              <button onClick={handleSavePayment} className="btn btn-primary" style={{ width: '100%' }}>Save Payment</button>
+              <button onClick={() => setPaymentModalOpen(false)} className="btn btn-secondary" style={{ width: '100%' }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

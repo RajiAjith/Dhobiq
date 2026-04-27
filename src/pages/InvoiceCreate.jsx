@@ -128,12 +128,24 @@ export default function InvoiceCreate() {
     setLoading(true);
     try {
       const customer = customers.find(c => c.id === selectedCustomerId);
+      const newTotal = calculateTotal();
+      
       if (isEditing) {
+        const amountPaid = existingInvoice?.amountPaid || 0;
+        const balanceAmount = newTotal - amountPaid;
+        let status = 'unpaid';
+        if (amountPaid > 0) {
+          status = amountPaid >= newTotal ? 'paid' : 'partial';
+        }
+
         await updateDoc(doc(db, 'invoices', id), {
           customerId:   customer.id,
           customerName: customer.name,
           items:        activeItems,
-          totalAmount:  calculateTotal(),
+          totalAmount:  newTotal,
+          amountPaid,
+          balanceAmount,
+          status
         });
       } else {
         const invoiceNumber = await generateInvoiceNumber();
@@ -143,7 +155,10 @@ export default function InvoiceCreate() {
           customerName: customer.name,
           date:         Date.now(),
           items:        activeItems,
-          totalAmount:  calculateTotal(),
+          totalAmount:  newTotal,
+          amountPaid:   0,
+          balanceAmount: newTotal,
+          status:       'unpaid'
         });
       }
       navigate('/invoices');
