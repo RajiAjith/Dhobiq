@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, deleteDoc, doc, query, where, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Link } from 'react-router-dom';
-import { Edit } from 'lucide-react';
+import { Edit, Trash2 } from 'lucide-react';
 
 export default function CustomerList() {
   const [customers, setCustomers] = useState([]);
@@ -26,6 +26,31 @@ export default function CustomerList() {
     fetchCustomers();
   }, []);
 
+  const handleDelete = async (customerId) => {
+    if (window.confirm("Are you sure you want to delete this customer? This will also delete all related invoices.")) {
+      setLoading(true);
+      try {
+        await deleteDoc(doc(db, 'customers', customerId));
+
+        const q = query(collection(db, 'invoices'), where('customerId', '==', customerId));
+        const invoiceSnap = await getDocs(q);
+        
+        const batch = writeBatch(db);
+        invoiceSnap.forEach((docSnap) => {
+          batch.delete(docSnap.ref);
+        });
+        await batch.commit();
+
+        setCustomers(customers.filter(c => c.id !== customerId));
+      } catch (error) {
+        console.error("Error deleting customer:", error);
+        alert("Failed to delete customer");
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
   return (
     <div className="card">
       <div className="flex-between mb-2">
@@ -44,7 +69,7 @@ export default function CustomerList() {
                 <th>Name</th>
                 <th>Phone</th>
                 <th style={{ display: 'none' }} className="hide-mobile">Address</th>
-                <th>Edit</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -56,10 +81,15 @@ export default function CustomerList() {
                   <td data-label="Name">{customer.name}</td>
                   <td data-label="Phone" style={{ whiteSpace: 'nowrap' }}>{customer.phone}</td>
                   <td data-label="Address" style={{ display: 'none' }} className="hide-mobile">{customer.address}</td>
-                  <td data-label="Edit">
-                    <Link to={`/customers/${customer.id}`} className="btn-icon" title="Edit Customer">
-                      <Edit size={18} />
-                    </Link>
+                  <td data-label="Actions">
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                      <Link to={`/customers/${customer.id}`} className="btn-icon" title="Edit Customer">
+                        <Edit size={18} />
+                      </Link>
+                      <button onClick={() => handleDelete(customer.id)} className="btn-icon" title="Delete Customer" style={{ color: '#dc3545', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

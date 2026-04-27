@@ -33,6 +33,7 @@ function AppRoutes() {
         <Route path="customers/:id"    element={<CustomerForm />} />
         <Route path="invoices"         element={<InvoiceHistory />} />
         <Route path="create-invoice"   element={<InvoiceCreate />} />
+        <Route path="edit-invoice/:id" element={<InvoiceCreate />} />
         <Route path="services"         element={<ServiceList />} />
       </Route>
     </Routes>

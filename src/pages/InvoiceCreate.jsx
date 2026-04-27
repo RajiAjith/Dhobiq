@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, doc, setDoc, runTransaction } from 'firebase/firestore';
+import { collection, getDocs, doc, setDoc, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 
 async function fetchServicesFromDB() {
@@ -20,20 +20,37 @@ export default function InvoiceCreate() {
   const [items,              setItems]              = useState([]);
   const [loading,            setLoading]            = useState(false);
   const [dataLoading,        setDataLoading]        = useState(true);
+  const { id } = useParams();
+  const isEditing = Boolean(id);
+  const [existingInvoice, setExistingInvoice] = useState(null);
   const navigate = useNavigate();
 
   // Load customers + services on mount
   useEffect(() => {
     async function loadData() {
       try {
-        const [custSnapshot, svcList] = await Promise.all([
+        const promises = [
           getDocs(collection(db, 'customers')),
           fetchServicesFromDB(),
-        ]);
+        ];
+        if (isEditing) {
+          promises.push(getDoc(doc(db, 'invoices', id)));
+        }
+
+        const results = await Promise.all(promises);
+        const custSnapshot = results[0];
+        const svcList = results[1];
+        
         const custData = [];
         custSnapshot.forEach(d => custData.push({ id: d.id, ...d.data() }));
         setCustomers(custData);
         setServices(svcList);
+
+        if (isEditing && results[2] && results[2].exists()) {
+          const invData = results[2].data();
+          setExistingInvoice(invData);
+          setSelectedCustomerId(invData.customerId);
+        }
       } catch (err) {
         console.error('Error loading data:', err);
       } finally {
@@ -41,7 +58,7 @@ export default function InvoiceCreate() {
       }
     }
     loadData();
-  }, []);
+  }, [id, isEditing]);
 
   // Re-build line items whenever customer or services change
   useEffect(() => {
@@ -51,6 +68,13 @@ export default function InvoiceCreate() {
     }
     const customer = customers.find(c => c.id === selectedCustomerId);
     const initialItems = services.map(svc => {
+      if (isEditing && existingInvoice && existingInvoice.customerId === selectedCustomerId) {
+        const existingItem = existingInvoice.items.find(i => i.id === svc.id);
+        if (existingItem) {
+          return { ...existingItem };
+        }
+      }
+
       let price = svc.defaultPrice;
       if (
         customer?.customPrices &&
@@ -62,7 +86,7 @@ export default function InvoiceCreate() {
       return { id: svc.id, name: svc.name, quantity: 0, unitPrice: price, total: 0 };
     });
     setItems(initialItems);
-  }, [selectedCustomerId, customers, services]);
+  }, [selectedCustomerId, customers, services, isEditing, existingInvoice]);
 
   const handleItemChange = (index, field, value) => {
     const newItems = [...items];
@@ -103,20 +127,29 @@ export default function InvoiceCreate() {
     }
     setLoading(true);
     try {
-      const invoiceNumber = await generateInvoiceNumber();
-      const customer      = customers.find(c => c.id === selectedCustomerId);
-      await setDoc(doc(db, 'invoices', invoiceNumber), {
-        invoiceNumber,
-        customerId:   customer.id,
-        customerName: customer.name,
-        date:         Date.now(),
-        items:        activeItems,
-        totalAmount:  calculateTotal(),
-      });
+      const customer = customers.find(c => c.id === selectedCustomerId);
+      if (isEditing) {
+        await updateDoc(doc(db, 'invoices', id), {
+          customerId:   customer.id,
+          customerName: customer.name,
+          items:        activeItems,
+          totalAmount:  calculateTotal(),
+        });
+      } else {
+        const invoiceNumber = await generateInvoiceNumber();
+        await setDoc(doc(db, 'invoices', invoiceNumber), {
+          invoiceNumber,
+          customerId:   customer.id,
+          customerName: customer.name,
+          date:         Date.now(),
+          items:        activeItems,
+          totalAmount:  calculateTotal(),
+        });
+      }
       navigate('/invoices');
     } catch (error) {
-      console.error('Error creating invoice:', error);
-      alert('Failed to create invoice.');
+      console.error('Error saving invoice:', error);
+      alert('Failed to save invoice.');
     }
     setLoading(false);
   };
@@ -131,7 +164,7 @@ export default function InvoiceCreate() {
 
   return (
     <div className="card">
-      <h2 className="card-title">Create New Invoice</h2>
+      <h2 className="card-title">{isEditing ? 'Edit Invoice' : 'Create New Invoice'}</h2>
 
       {/* Customer Selector */}
       <div className="form-group">
@@ -212,7 +245,7 @@ export default function InvoiceCreate() {
           {/* Action Buttons */}
           <div className="action-row">
             <button type="submit" disabled={loading} className="btn btn-primary">
-              {loading ? 'Generating Invoice...' : 'Save Invoice'}
+              {loading ? 'Saving...' : (isEditing ? 'Update Invoice' : 'Save Invoice')}
             </button>
             <button type="button" onClick={() => navigate('/')} className="btn btn-secondary">
               Cancel

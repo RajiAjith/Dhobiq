@@ -66,6 +66,29 @@ export default function CustomerForm() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const handlePhoneChange = (e) => {
+    let val = e.target.value;
+
+    if (!val || val === '+91 ' || val === '+91') {
+      setFormData({ ...formData, phone: '' });
+      return;
+    }
+
+    let prefix = '+91 ';
+    let rawInput = val.startsWith(prefix) ? val.slice(prefix.length) : val;
+    if (val.startsWith('+91') && !val.startsWith('+91 ')) {
+      rawInput = val.slice(3);
+    }
+
+    let digits = rawInput.replace(/\D/g, '');
+
+    if (digits.length > 10) {
+      digits = digits.slice(0, 10);
+    }
+
+    setFormData({ ...formData, phone: prefix + digits });
+  };
+
   const handlePriceChange = (serviceId, value) => {
     setFormData({
       ...formData,
@@ -79,6 +102,16 @@ export default function CustomerForm() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+
+    if (formData.phone) {
+      const digits = formData.phone.replace('+91', '').replace(/\s+/g, '').trim();
+      if (!/^\d{10}$/.test(digits)) {
+        alert("Please enter exactly 10 digits for the mobile number.");
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       if (id) {
         await setDoc(doc(db, 'customers', id), formData);
@@ -125,17 +158,18 @@ export default function CustomerForm() {
           />
         </div>
         <div className="form-group">
-          <label htmlFor="cust-phone">Phone</label>
+          <label htmlFor="cust-phone">Phone (Optional)</label>
           <input
             id="cust-phone"
             type="tel"
             name="phone"
             value={formData.phone}
-            onChange={handleChange}
-            required
+            onChange={handlePhoneChange}
             className="form-control"
-            inputMode="tel"
+            inputMode="numeric"
             autoComplete="tel"
+            placeholder="+91 "
+            maxLength="14"
           />
         </div>
         <div className="form-group">

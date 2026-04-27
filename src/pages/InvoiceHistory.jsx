@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { format } from 'date-fns';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
-import { Download } from 'lucide-react';
+import { Download, Edit, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const MONTHS = [
   { value: '', label: 'All Months' },
@@ -99,6 +100,19 @@ export default function InvoiceHistory() {
     }
   };
 
+  const handleDeleteInvoice = async (invoiceId) => {
+    if (window.confirm("Delete this invoice?")) {
+      try {
+        await deleteDoc(doc(db, 'invoices', invoiceId));
+        setInvoices(invoices.filter(inv => inv.id !== invoiceId));
+        // filteredInvoices will update via useEffect as invoices change
+      } catch (error) {
+        console.error("Error deleting invoice:", error);
+        alert("Failed to delete invoice.");
+      }
+    }
+  };
+
   return (
     <div>
       {/* Sticky Filters */}
@@ -163,7 +177,7 @@ export default function InvoiceHistory() {
                   <th>Customer</th>
                   <th>Date</th>
                   <th>Amount</th>
-                  <th>PDF</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,14 +191,22 @@ export default function InvoiceHistory() {
                     <td data-label="Amount" style={{ whiteSpace: 'nowrap', fontWeight: '500' }}>
                       ₹{Number(inv.totalAmount).toFixed(2)}
                     </td>
-                    <td data-label="PDF">
-                      <button
-                        onClick={() => handleDownloadPDF(inv)}
-                        className="btn-icon"
-                        title="Download PDF"
-                      >
-                        <Download size={18} />
-                      </button>
+                    <td data-label="Actions">
+                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                        <button
+                          onClick={() => handleDownloadPDF(inv)}
+                          className="btn-icon"
+                          title="Download PDF"
+                        >
+                          <Download size={18} />
+                        </button>
+                        <Link to={`/edit-invoice/${inv.id}`} className="btn-icon" title="Edit Invoice">
+                          <Edit size={18} />
+                        </Link>
+                        <button onClick={() => handleDeleteInvoice(inv.id)} className="btn-icon" title="Delete Invoice" style={{ color: '#dc3545', border: 'none', background: 'transparent', cursor: 'pointer' }}>
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
