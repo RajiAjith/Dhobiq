@@ -34,7 +34,7 @@ export default function CustomerList() {
 
         const q = query(collection(db, 'invoices'), where('customerId', '==', customerId));
         const invoiceSnap = await getDocs(q);
-        
+
         const batch = writeBatch(db);
         invoiceSnap.forEach((docSnap) => {
           batch.delete(docSnap.ref);
@@ -83,7 +83,7 @@ export default function CustomerList() {
                   <td data-label="Address" style={{ display: 'none' }} className="hide-mobile">{customer.address}</td>
                   <td data-label="Actions">
                     <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                      <Link to={`/customers/${customer.id}`} className="btn-icon" title="Edit Customer">
+                      <Link to={`/customers/${customer.id}`} className="btn-icon edit" title="Edit Customer">
                         <Edit size={18} />
                       </Link>
                       <button onClick={() => handleDelete(customer.id)} className="btn-icon" title="Delete Customer" style={{ color: '#dc3545', border: 'none', background: 'transparent', cursor: 'pointer' }}>

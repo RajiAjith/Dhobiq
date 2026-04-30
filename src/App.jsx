@@ -9,6 +9,7 @@ import CustomerForm from './pages/CustomerForm';
 import InvoiceHistory from './pages/InvoiceHistory';
 import InvoiceCreate from './pages/InvoiceCreate';
 import ServiceList from './pages/ServiceList';
+import InstallPrompt from './components/InstallPrompt';
 
 const PrivateRoute = ({ children }) => {
   const { currentUser } = useAuth();
@@ -45,6 +46,8 @@ function App() {
     <AuthProvider>
       <Router>
         <AppRoutes />
+        {/* PWA install prompt — rendered outside routes so it's always visible */}
+        <InstallPrompt />
       </Router>
     </AuthProvider>
   );

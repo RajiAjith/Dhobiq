@@ -9,6 +9,7 @@
   --danger: #dc3545;
   --success: #28a745;
   --header-height: 56px;
+  --edit-btn: #420a5c;
 }
 
 /* ===== RESET & BASE ===== */
@@ -328,6 +329,14 @@ select.form-control:hover {
 .btn-danger {
   background-color: var(--danger);
   color: var(--white);
+}
+
+.btn-icon.edit {
+  color: var(--edit-btn)
+}
+
+.btn-icon.delete {
+  color: var(--danger);
 }
 
 .btn-icon {
@@ -916,5 +925,25 @@ label {
     margin-right: 12px;
     color: var(--text-light);
     font-size: 0.85rem;
+  }
+}
+
+/* ===== PWA INSTALL PROMPT ANIMATION ===== */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Safe area inset for notch / home indicator on iOS */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .app-container {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }

@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
-import { Pencil, Trash2, Plus, Check, X, Download } from 'lucide-react';
+import { Edit, Trash2, Plus, Check, X, Download } from 'lucide-react';
 
 export default function ServiceList() {
   const [services, setServices] = useState([]);
@@ -45,7 +45,7 @@ export default function ServiceList() {
     setSaving(true);
     try {
       // Add each fallback service to Firestore
-      const promises = FALLBACK_SERVICES.map(svc => 
+      const promises = FALLBACK_SERVICES.map(svc =>
         addDoc(collection(db, 'services'), {
           name: svc.name,
           defaultPrice: svc.defaultPrice
@@ -210,9 +210,9 @@ export default function ServiceList() {
                   <Plus size={18} /> Add First Service
                 </button>
               )}
-              <button 
-                className="btn btn-secondary w-100" 
-                style={{ maxWidth: '250px' }} 
+              <button
+                className="btn btn-secondary w-100"
+                style={{ maxWidth: '250px' }}
                 onClick={handleSeedDefaults}
                 disabled={saving}
               >
@@ -289,15 +289,11 @@ export default function ServiceList() {
                           <td data-label="Default Price" style={{ whiteSpace: 'nowrap' }}>₹{Number(svc.defaultPrice).toFixed(2)}</td>
                           <td data-label="Actions">
                             <div style={{ display: 'flex', gap: '6px' }}>
-                              <button
-                                className="btn-icon"
-                                title="Edit"
-                                onClick={() => startEdit(svc)}
-                              >
-                                <Pencil size={17} />
+                              <button className="btn-icon edit" title="Edit" onClick={() => startEdit(svc)}>
+                                <Edit size={18} />
                               </button>
                               <button
-                                className="btn-icon"
+                                className="btn-icon delete"
                                 title="Delete"
                                 style={{ color: deleteId === svc.id ? 'var(--danger)' : undefined }}
                                 onClick={() => setDeleteId(deleteId === svc.id ? null : svc.id)}
