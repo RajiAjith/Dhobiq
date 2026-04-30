@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { doc, getDoc, setDoc, addDoc, collection, getDocs, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
 import { format } from 'date-fns';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
+import OfflineScreen from '../components/OfflineScreen';
 
 export default function CustomerForm() {
   const { id } = useParams();
@@ -11,6 +13,9 @@ export default function CustomerForm() {
   const [loading, setLoading] = useState(false);
   const [services, setServices] = useState([]);
   const [dataReady, setDataReady] = useState(false);
+  const [isOfflineError, setIsOfflineError] = useState(false);
+
+  const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
   const [formData, setFormData] = useState({
     name: '',
@@ -19,48 +24,66 @@ export default function CustomerForm() {
     customPrices: {}
   });
 
-  // Load services + existing customer (if editing) in parallel
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const svcSnap = await getDocs(collection(db, 'services'));
-        const svcData = [];
-        svcSnap.forEach(d => svcData.push({ id: d.id, ...d.data() }));
-        const resolvedServices = svcData.length > 0
-          ? svcData.sort((a, b) => a.name.localeCompare(b.name))
-          : FALLBACK_SERVICES;
-        setServices(resolvedServices);
-
-        if (id) {
-          const docSnap = await getDoc(doc(db, 'customers', id));
-          if (docSnap.exists()) setFormData(docSnap.data());
-        }
-      } catch (err) {
-        console.error('Error loading data:', err);
-      } finally {
-        setDataReady(true);
-      }
+  const loadData = useCallback(async () => {
+    if (!navigator.onLine) {
+      setIsOfflineError(true);
+      setDataReady(false);
+      return;
     }
-    loadData();
-  }, [id]);
+    setDataReady(false);
+    setIsOfflineError(false);
+
+    try {
+      const svcSnap = await getDocs(collection(db, 'services'));
+      const svcData = [];
+      svcSnap.forEach(d => svcData.push({ id: d.id, ...d.data() }));
+      const resolvedServices = svcData.length > 0
+        ? svcData.sort((a, b) => a.name.localeCompare(b.name))
+        : FALLBACK_SERVICES;
+      setServices(resolvedServices);
+
+      if (id) {
+        const docSnap = await getDoc(doc(db, 'customers', id));
+        if (docSnap.exists()) setFormData(docSnap.data());
+      }
+      clearWasOffline();
+    } catch (err) {
+      console.error('Error loading data:', err);
+      reportError(err);
+      if (isNetworkError(err)) setIsOfflineError(true);
+    } finally {
+      setDataReady(true);
+    }
+  }, [id, reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadData(); }, [id, loadData]);
 
   const generateCustomerId = async () => {
     const yearStr = format(new Date(), 'yy');
     const counterRef = doc(db, 'counters', 'customer_sequence');
     let newSequence = 1;
 
-    await runTransaction(db, async (transaction) => {
-      const counterDoc = await transaction.get(counterRef);
-      if (!counterDoc.exists()) {
-        transaction.set(counterRef, { seq: 1 });
-      } else {
-        newSequence = counterDoc.data().seq + 1;
-        transaction.update(counterRef, { seq: newSequence });
-      }
-    });
-
-    return `DQ-C${yearStr}-${String(newSequence).padStart(3, '0')}`;
+    try {
+      await runTransaction(db, async (transaction) => {
+        const counterDoc = await transaction.get(counterRef);
+        if (!counterDoc.exists()) {
+          transaction.set(counterRef, { seq: 1 });
+        } else {
+          newSequence = counterDoc.data().seq + 1;
+          transaction.update(counterRef, { seq: newSequence });
+        }
+      });
+      return `DQ-C${yearStr}-${String(newSequence).padStart(3, '0')}`;
+    } catch (e) {
+      console.error("Transaction failed, using timestamp fallback", e);
+      return `DQ-C${yearStr}-${Date.now().toString().slice(-6)}`;
+    }
   };
+
+  // Auto-reload on reconnect
+  useEffect(() => {
+    if (isOnline && wasOffline) loadData();
+  }, [isOnline, wasOffline, loadData]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -68,24 +91,19 @@ export default function CustomerForm() {
 
   const handlePhoneChange = (e) => {
     let val = e.target.value;
-
     if (!val || val === '+91 ' || val === '+91') {
       setFormData({ ...formData, phone: '' });
       return;
     }
-
     let prefix = '+91 ';
     let rawInput = val.startsWith(prefix) ? val.slice(prefix.length) : val;
     if (val.startsWith('+91') && !val.startsWith('+91 ')) {
       rawInput = val.slice(3);
     }
-
     let digits = rawInput.replace(/\D/g, '');
-
     if (digits.length > 10) {
       digits = digits.slice(0, 10);
     }
-
     setFormData({ ...formData, phone: prefix + digits });
   };
 
@@ -119,21 +137,34 @@ export default function CustomerForm() {
         const customId = await generateCustomerId();
         await setDoc(doc(db, 'customers', customId), {
           ...formData,
-          id: customId // Store ID inside document as well
+          id: customId
         });
       }
       navigate('/customers');
     } catch (error) {
       console.error('Error saving customer:', error);
-      alert('Failed to save customer');
+      reportError(error);
+      if (isNetworkError(error)) {
+        alert('No internet connection. Please check your network and try again.');
+      } else {
+        alert('Failed to save customer');
+      }
     }
     setLoading(false);
   };
 
+  if (!dataReady && isOfflineError) {
+    return <OfflineScreen onRetry={loadData} />;
+  }
+
   if (!dataReady) {
     return (
       <div className="card">
-        <p className="text-muted">Loading...</p>
+        <div className="loading-pulse">
+          <div className="loading-pulse__bar" style={{ width: '40%' }} />
+          <div className="loading-pulse__bar" />
+          <div className="loading-pulse__bar" style={{ width: '70%' }} />
+        </div>
       </div>
     );
   }

@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { collection, getDocs, doc, getDoc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { format } from 'date-fns';
 import { generateInvoicePDF } from '../utils/pdfGenerator';
 import { Download, Edit, Trash2, CreditCard } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
+import OfflineScreen from '../components/OfflineScreen';
 
 const MONTHS = [
   { value: '', label: 'All Months' },
@@ -29,6 +31,9 @@ export default function InvoiceHistory() {
   const [filteredInvoices, setFilteredInvoices] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isOfflineError, setIsOfflineError] = useState(false);
+
+  const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentInvoice, setPaymentInvoice] = useState(null);
@@ -40,31 +45,45 @@ export default function InvoiceHistory() {
     year: new Date().getFullYear().toString()
   });
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [invSnapshot, custSnapshot] = await Promise.all([
-          getDocs(collection(db, 'invoices')),
-          getDocs(collection(db, 'customers'))
-        ]);
-
-        const invData = [];
-        invSnapshot.forEach(doc => invData.push({ id: doc.id, ...doc.data() }));
-        invData.sort((a, b) => b.date - a.date);
-        setInvoices(invData);
-        setFilteredInvoices(invData);
-
-        const custData = [];
-        custSnapshot.forEach(doc => custData.push({ id: doc.id, ...doc.data() }));
-        setCustomers(custData);
-      } catch (error) {
-        console.error("Error fetching data:", error);
-      } finally {
-        setLoading(false);
-      }
+  const fetchData = useCallback(async () => {
+    if (!navigator.onLine) {
+      setIsOfflineError(true);
+      setLoading(false);
+      return;
     }
-    fetchData();
-  }, []);
+    setLoading(true);
+    setIsOfflineError(false);
+    try {
+      const [invSnapshot, custSnapshot] = await Promise.all([
+        getDocs(collection(db, 'invoices')),
+        getDocs(collection(db, 'customers'))
+      ]);
+
+      const invData = [];
+      invSnapshot.forEach(doc => invData.push({ id: doc.id, ...doc.data() }));
+      invData.sort((a, b) => b.date - a.date);
+      setInvoices(invData);
+      setFilteredInvoices(invData);
+
+      const custData = [];
+      custSnapshot.forEach(doc => custData.push({ id: doc.id, ...doc.data() }));
+      setCustomers(custData);
+      clearWasOffline();
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      reportError(error);
+      if (isNetworkError(error)) setIsOfflineError(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { fetchData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-reload when connection is restored
+  useEffect(() => {
+    if (isOnline && wasOffline) fetchData();
+  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let result = [...invoices];
@@ -112,6 +131,7 @@ export default function InvoiceHistory() {
         // filteredInvoices will update via useEffect as invoices change
       } catch (error) {
         console.error("Error deleting invoice:", error);
+        reportError(error);
         alert("Failed to delete invoice.");
       }
     }
@@ -164,6 +184,7 @@ export default function InvoiceHistory() {
       setPaymentAmount('');
     } catch (error) {
       console.error("Error saving payment:", error);
+      reportError(error);
       alert("Failed to save payment.");
     }
   };
@@ -179,6 +200,10 @@ export default function InvoiceHistory() {
         return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#f8d7da', color: '#721c24', fontSize: '0.75rem', fontWeight: 'bold' }}>Unpaid</span>;
     }
   };
+
+  if (!loading && isOfflineError) {
+    return <OfflineScreen onRetry={fetchData} />;
+  }
 
   return (
     <div>
@@ -234,7 +259,11 @@ export default function InvoiceHistory() {
         <h2 className="card-title">Invoice History</h2>
 
         {loading ? (
-          <p className="text-muted">Loading...</p>
+          <div className="loading-pulse">
+            <div className="loading-pulse__bar" />
+            <div className="loading-pulse__bar" style={{ width: '80%' }} />
+            <div className="loading-pulse__bar" style={{ width: '60%' }} />
+          </div>
         ) : filteredInvoices.length > 0 ? (
           <div className="table-responsive">
             <table className="table card-table">

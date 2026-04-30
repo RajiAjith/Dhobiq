@@ -58,7 +58,8 @@ self.addEventListener('fetch', (event) => {
     url.hostname.includes('firebase.googleapis.com') ||
     url.hostname.includes('identitytoolkit.googleapis.com') ||
     url.hostname.includes('securetoken.googleapis.com') ||
-    url.pathname.startsWith('/__/')
+    url.pathname.startsWith('/__/') ||
+    url.pathname === '/ping'
   ) {
     return; // Let the browser handle these directly
   }

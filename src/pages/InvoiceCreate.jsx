@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs, doc, setDoc, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
 import { useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
+import OfflineScreen from '../components/OfflineScreen';
 
 async function fetchServicesFromDB() {
   const snapshot = await getDocs(collection(db, 'services'));
@@ -20,45 +22,61 @@ export default function InvoiceCreate() {
   const [items,              setItems]              = useState([]);
   const [loading,            setLoading]            = useState(false);
   const [dataLoading,        setDataLoading]        = useState(true);
+  const [isOfflineError,     setIsOfflineError]     = useState(false);
   const { id } = useParams();
   const isEditing = Boolean(id);
   const [existingInvoice, setExistingInvoice] = useState(null);
   const navigate = useNavigate();
 
-  // Load customers + services on mount
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const promises = [
-          getDocs(collection(db, 'customers')),
-          fetchServicesFromDB(),
-        ];
-        if (isEditing) {
-          promises.push(getDoc(doc(db, 'invoices', id)));
-        }
+  const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
-        const results = await Promise.all(promises);
-        const custSnapshot = results[0];
-        const svcList = results[1];
-        
-        const custData = [];
-        custSnapshot.forEach(d => custData.push({ id: d.id, ...d.data() }));
-        setCustomers(custData);
-        setServices(svcList);
-
-        if (isEditing && results[2] && results[2].exists()) {
-          const invData = results[2].data();
-          setExistingInvoice(invData);
-          setSelectedCustomerId(invData.customerId);
-        }
-      } catch (err) {
-        console.error('Error loading data:', err);
-      } finally {
-        setDataLoading(false);
-      }
+  const loadData = useCallback(async () => {
+    if (!navigator.onLine) {
+      setIsOfflineError(true);
+      setDataLoading(false);
+      return;
     }
-    loadData();
-  }, [id, isEditing]);
+    setDataLoading(true);
+    setIsOfflineError(false);
+    try {
+      const promises = [
+        getDocs(collection(db, 'customers')),
+        fetchServicesFromDB(),
+      ];
+      if (isEditing) {
+        promises.push(getDoc(doc(db, 'invoices', id)));
+      }
+
+      const results = await Promise.all(promises);
+      const custSnapshot = results[0];
+      const svcList = results[1];
+      
+      const custData = [];
+      custSnapshot.forEach(d => custData.push({ id: d.id, ...d.data() }));
+      setCustomers(custData);
+      setServices(svcList);
+
+      if (isEditing && results[2] && results[2].exists()) {
+        const invData = results[2].data();
+        setExistingInvoice(invData);
+        setSelectedCustomerId(invData.customerId);
+      }
+      clearWasOffline();
+    } catch (err) {
+      console.error('Error loading data:', err);
+      reportError(err);
+      if (isNetworkError(err)) setIsOfflineError(true);
+    } finally {
+      setDataLoading(false);
+    }
+  }, [id, isEditing, reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadData(); }, [id, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-reload on reconnect
+  useEffect(() => {
+    if (isOnline && wasOffline) loadData();
+  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-build line items whenever customer or services change
   useEffect(() => {
@@ -164,15 +182,28 @@ export default function InvoiceCreate() {
       navigate('/invoices');
     } catch (error) {
       console.error('Error saving invoice:', error);
-      alert('Failed to save invoice.');
+      reportError(error);
+      if (isNetworkError(error)) {
+        alert('No internet connection. Please check your network and try again.');
+      } else {
+        alert('Failed to save invoice.');
+      }
     }
     setLoading(false);
   };
 
+  if (!dataLoading && isOfflineError) {
+    return <OfflineScreen onRetry={loadData} />;
+  }
+
   if (dataLoading) {
     return (
       <div className="card">
-        <p className="text-muted">Loading data...</p>
+        <div className="loading-pulse">
+          <div className="loading-pulse__bar" style={{ width: '40%' }} />
+          <div className="loading-pulse__bar" />
+          <div className="loading-pulse__bar" style={{ width: '70%' }} />
+        </div>
       </div>
     );
   }

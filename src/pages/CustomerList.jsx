@@ -1,33 +1,60 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { collection, getDocs, deleteDoc, doc, query, where, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Link } from 'react-router-dom';
 import { Edit, Trash2 } from 'lucide-react';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
+import OfflineScreen from '../components/OfflineScreen';
 
 export default function CustomerList() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isOfflineError, setIsOfflineError] = useState(false);
+
+  const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
+
+  const fetchCustomers = useCallback(async () => {
+    if (!navigator.onLine) {
+      setIsOfflineError(true);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setIsOfflineError(false);
+
+    try {
+      const querySnapshot = await getDocs(collection(db, 'customers'));
+      const custData = [];
+      querySnapshot.forEach((doc) => {
+        custData.push({ id: doc.id, ...doc.data() });
+      });
+      setCustomers(custData);
+      clearWasOffline();
+    } catch (error) {
+      console.error('Error fetching customers:', error);
+      reportError(error);
+      if (isNetworkError(error)) {
+        setIsOfflineError(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    async function fetchCustomers() {
-      try {
-        const querySnapshot = await getDocs(collection(db, 'customers'));
-        const custData = [];
-        querySnapshot.forEach((doc) => {
-          custData.push({ id: doc.id, ...doc.data() });
-        });
-        setCustomers(custData);
-      } catch (error) {
-        console.error("Error fetching customers:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchCustomers();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-reload on reconnect
+  useEffect(() => {
+    if (isOnline && wasOffline) {
+      fetchCustomers();
+    }
+  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (customerId) => {
-    if (window.confirm("Are you sure you want to delete this customer? This will also delete all related invoices.")) {
+    if (window.confirm('Are you sure you want to delete this customer? This will also delete all related invoices.')) {
       setLoading(true);
       try {
         await deleteDoc(doc(db, 'customers', customerId));
@@ -43,13 +70,18 @@ export default function CustomerList() {
 
         setCustomers(customers.filter(c => c.id !== customerId));
       } catch (error) {
-        console.error("Error deleting customer:", error);
-        alert("Failed to delete customer");
+        console.error('Error deleting customer:', error);
+        reportError(error);
+        alert('Failed to delete customer');
       } finally {
         setLoading(false);
       }
     }
   };
+
+  if (!loading && isOfflineError) {
+    return <OfflineScreen onRetry={fetchCustomers} />;
+  }
 
   return (
     <div className="card">
@@ -59,7 +91,11 @@ export default function CustomerList() {
       </div>
 
       {loading ? (
-        <p className="text-muted">Loading...</p>
+        <div className="loading-pulse">
+          <div className="loading-pulse__bar" />
+          <div className="loading-pulse__bar" style={{ width: '80%' }} />
+          <div className="loading-pulse__bar" style={{ width: '60%' }} />
+        </div>
       ) : customers.length > 0 ? (
         <div className="table-responsive">
           <table className="table card-table">

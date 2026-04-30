@@ -1,53 +1,92 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import { FileText, Users, Settings } from 'lucide-react';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
+import OfflineScreen from '../components/OfflineScreen';
 
 export default function Dashboard() {
   const [recentInvoices, setRecentInvoices] = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [error,          setError]          = useState(null);
+  const [isOfflineError, setIsOfflineError] = useState(false);
 
-  useEffect(() => {
+  const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
+
+  const fetchRecentInvoices = useCallback(async () => {
+    // If we know we're offline, don't even try — show the screen immediately
+    if (!navigator.onLine) {
+      setIsOfflineError(true);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setIsOfflineError(false);
+
     let isMounted = true;
     const timeout = setTimeout(() => {
-      if (loading && isMounted) {
-        setError("Connection is taking longer than expected. Please check your internet or Firebase setup.");
+      if (isMounted && loading) {
+        setError('Connection is taking longer than expected. Please check your network.');
+        setIsOfflineError(true);
         setLoading(false);
       }
-    }, 15000); // 15s timeout
+    }, 15000);
 
-    async function fetchRecentInvoices() {
-      console.log("Fetching recent invoices... Current User:", auth.currentUser?.email || "Not logged in");
-      try {
-        const q = query(
-          collection(db, 'invoices'),
-          orderBy('date', 'desc'),
-          limit(5)
-        );
-        const querySnapshot = await getDocs(q);
-        console.log("Invoice fetch complete. Snapshot size:", querySnapshot.size);
-        const invoices = [];
-        querySnapshot.forEach(doc => invoices.push({ id: doc.id, ...doc.data() }));
-        if (isMounted) {
-          setRecentInvoices(invoices);
+    try {
+      const q = query(
+        collection(db, 'invoices'),
+        orderBy('date', 'desc'),
+        limit(5)
+      );
+      const querySnapshot = await getDocs(q);
+      const invoices = [];
+      querySnapshot.forEach(doc => invoices.push({ id: doc.id, ...doc.data() }));
+      if (isMounted) {
+        setRecentInvoices(invoices);
+        setError(null);
+        setIsOfflineError(false);
+        clearWasOffline();
+      }
+    } catch (err) {
+      console.error('Error fetching recent invoices:', err);
+      // Report error to global network context
+      reportError(err);
+      
+      if (isMounted) {
+        if (isNetworkError(err)) {
+          setIsOfflineError(true);
           setError(null);
-        }
-      } catch (error) {
-        console.error('Error fetching recent invoices: ', error);
-        if (isMounted) setError("Failed to connect to database: " + error.message);
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-          clearTimeout(timeout);
+        } else {
+          setError('Failed to connect to database: ' + err.message);
         }
       }
+    } finally {
+      clearTimeout(timeout);
+      if (isMounted) setLoading(false);
+      isMounted = false;
     }
+  }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Initial load
+  useEffect(() => {
     fetchRecentInvoices();
-    return () => { isMounted = false; clearTimeout(timeout); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-reload when connection is restored after an offline period
+  useEffect(() => {
+    if (isOnline && wasOffline) {
+      fetchRecentInvoices();
+    }
+  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Offline full-screen (replaces spinner) ──────────────────────────────────
+  if (!loading && isOfflineError) {
+    return <OfflineScreen onRetry={fetchRecentInvoices} />;
+  }
 
   return (
     <div>
@@ -83,7 +122,11 @@ export default function Dashboard() {
       <div className="card">
         <h3 className="card-title">Recent Invoices</h3>
         {loading ? (
-          <p className="text-muted">Loading...</p>
+          <div className="loading-pulse">
+            <div className="loading-pulse__bar" />
+            <div className="loading-pulse__bar" style={{ width: '75%' }} />
+            <div className="loading-pulse__bar" style={{ width: '55%' }} />
+          </div>
         ) : error ? (
           <div className="alert-danger mb-2">{error}</div>
         ) : recentInvoices.length > 0 ? (

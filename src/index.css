@@ -947,3 +947,184 @@ label {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* ===================================================================
+   OFFLINE BANNER
+   Fixed strip at the very top — slides in when offline, fades away
+   when back online (green flash).
+   =================================================================== */
+@keyframes offlineBannerSlideDown {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+@keyframes offlineBannerFadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 500;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
+  animation: offlineBannerSlideDown 0.3s ease-out both;
+}
+
+.offline-banner--online {
+  background: #1a7a4a;
+  animation: offlineBannerSlideDown 0.25s ease-out both;
+}
+
+.offline-banner__icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.offline-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.35;
+}
+
+.offline-banner__text strong {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.offline-banner__text span {
+  font-size: 0.78rem;
+  opacity: 0.88;
+  font-weight: 400;
+}
+
+/* Push header down when the banner is present so it doesn't overlap */
+body:has(.offline-banner) .header {
+  top: 42px;
+}
+
+/* Also push the sticky filters section down */
+body:has(.offline-banner) .filters-section {
+  top: calc(var(--header-height) + 42px);
+}
+
+@media (min-width: 768px) {
+  body:has(.offline-banner) .filters-section {
+    top: calc(64px + 42px);
+  }
+}
+
+/* ===================================================================
+   FULL-SCREEN OFFLINE STATE
+   Centered card shown when data cannot be loaded due to no network.
+   =================================================================== */
+@keyframes offlineScreenFadeIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.offline-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  padding: 24px 16px;
+  animation: offlineScreenFadeIn 0.35s ease-out both;
+}
+
+.offline-screen__card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 40px 28px;
+  max-width: 380px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10);
+  border: 1px solid #f0f0f0;
+}
+
+.offline-screen__icon-wrap {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: #fef2f2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+  color: #e53e3e;
+}
+
+.offline-screen__title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.offline-screen__message {
+  font-size: 0.9rem;
+  color: var(--text-light);
+  line-height: 1.65;
+  margin-bottom: 28px;
+}
+
+.offline-screen__retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 28px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 8px;
+  transition: background-color 0.2s, transform 0.15s;
+}
+
+.offline-screen__retry:active {
+  transform: scale(0.97);
+}
+
+/* ===================================================================
+   SKELETON / LOADING PULSE
+   Replaces plain "Loading..." text with an animated shimmer bar set.
+   =================================================================== */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+.loading-pulse {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0;
+}
+
+.loading-pulse__bar {
+  height: 14px;
+  width: 100%;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    #f0f0f0 25%,
+    #e0e8f0 50%,
+    #f0f0f0 75%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}

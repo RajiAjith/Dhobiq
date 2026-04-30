@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
 
 export default function Login() {
   const emailRef = useRef();
@@ -9,6 +10,7 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { reportError } = useNetwork();
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -18,7 +20,13 @@ export default function Login() {
       await login(emailRef.current.value, passwordRef.current.value);
       navigate('/');
     } catch (err) {
-      setError('Failed to log in: ' + err.message);
+      console.error('Login error:', err);
+      reportError(err);
+      if (isNetworkError(err)) {
+        setError('No internet connection. Please check your network and try again.');
+      } else {
+        setError('Failed to log in: ' + err.message);
+      }
     }
     setLoading(false);
   }

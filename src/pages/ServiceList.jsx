@@ -1,15 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   collection, getDocs, addDoc, doc, updateDoc, deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
 import { Edit, Trash2, Plus, Check, X, Download } from 'lucide-react';
+import { useNetwork, isNetworkError } from '../context/NetworkContext';
+import OfflineScreen from '../components/OfflineScreen';
 
 export default function ServiceList() {
   const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isOfflineError, setIsOfflineError] = useState(false);
+
+  const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
   // Inline add form state
   const [showAddForm, setShowAddForm] = useState(false);
@@ -24,21 +29,36 @@ export default function ServiceList() {
   // Delete confirmation
   const [deleteId, setDeleteId] = useState(null);
 
-  async function fetchServices() {
+  const fetchServices = useCallback(async () => {
+    if (!navigator.onLine) {
+      setIsOfflineError(true);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setIsOfflineError(false);
     try {
       const snapshot = await getDocs(collection(db, 'services'));
       const data = [];
       snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
       data.sort((a, b) => a.name.localeCompare(b.name));
       setServices(data);
+      clearWasOffline();
     } catch (err) {
       console.error('Error fetching services:', err);
+      reportError(err);
+      if (isNetworkError(err)) setIsOfflineError(true);
     } finally {
       setLoading(false);
     }
-  }
+  }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { fetchServices(); }, []);
+  useEffect(() => { fetchServices(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-reload on reconnect
+  useEffect(() => {
+    if (isOnline && wasOffline) fetchServices();
+  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSeedDefaults = async () => {
     if (!window.confirm('Import default services (Bedsheet, Shirt, etc.)?')) return;
@@ -55,6 +75,7 @@ export default function ServiceList() {
       await fetchServices();
     } catch (err) {
       console.error('Error seeding services:', err);
+      reportError(err);
       alert('Failed to import defaults');
     }
     setSaving(false);
@@ -76,6 +97,7 @@ export default function ServiceList() {
       await fetchServices();
     } catch (err) {
       console.error('Error adding service:', err);
+      reportError(err);
       alert('Failed to add service');
     }
     setSaving(false);
@@ -108,6 +130,7 @@ export default function ServiceList() {
       await fetchServices();
     } catch (err) {
       console.error('Error updating service:', err);
+      reportError(err);
       alert('Failed to update service');
     }
     setSaving(false);
@@ -122,10 +145,15 @@ export default function ServiceList() {
       await fetchServices();
     } catch (err) {
       console.error('Error deleting service:', err);
+      reportError(err);
       alert('Failed to delete service');
     }
     setSaving(false);
   };
+
+  if (!loading && isOfflineError) {
+    return <OfflineScreen onRetry={fetchServices} />;
+  }
 
   return (
     <div>
@@ -198,7 +226,11 @@ export default function ServiceList() {
       {/* Services Table */}
       <div className="card">
         {loading ? (
-          <p className="text-muted">Loading services...</p>
+          <div className="loading-pulse">
+            <div className="loading-pulse__bar" />
+            <div className="loading-pulse__bar" style={{ width: '70%' }} />
+            <div className="loading-pulse__bar" style={{ width: '50%' }} />
+          </div>
         ) : services.length === 0 ? (
           <div className="text-center" style={{ padding: '32px 16px' }}>
             <p className="text-muted" style={{ marginBottom: '16px' }}>
