@@ -1,66 +1,80 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, getDocs, doc, setDoc, getDoc, updateDoc, runTransaction } from 'firebase/firestore';
+import {
+  collection, getDocs, doc, setDoc, runTransaction, writeBatch, getDoc
+} from 'firebase/firestore';
 import { db } from '../firebase';
-import { FALLBACK_SERVICES } from '../utils/constants';
-import { useNavigate, useParams } from 'react-router-dom';
-import { format } from 'date-fns';
+import { fetchServicesSorted } from '../utils/serviceHelpers';
+import { useNavigate } from 'react-router-dom';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 
-async function fetchServicesFromDB() {
-  const snapshot = await getDocs(collection(db, 'services'));
-  const data = [];
-  snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
-  if (data.length === 0) return FALLBACK_SERVICES;
-  return data.sort((a, b) => a.name.localeCompare(b.name));
+/**
+ * Aggregate bill items by (serviceId + unitPrice).
+ * Items with same service but different rates remain separate rows.
+ */
+function aggregateBillItems(selectedBills) {
+  const map = {};
+  for (const bill of selectedBills) {
+    for (const item of (bill.items || [])) {
+      const key = `${item.id}::${item.unitPrice}`;
+      if (map[key]) {
+        map[key].quantity += Number(item.quantity) || 0;
+        map[key].total    += Number(item.total)    || 0;
+      } else {
+        map[key] = {
+          id:        item.id,
+          name:      item.name,
+          unitPrice: item.unitPrice,
+          quantity:  Number(item.quantity) || 0,
+          total:     Number(item.total)    || 0,
+        };
+      }
+    }
+  }
+  return Object.values(map);
 }
 
 export default function InvoiceCreate() {
-  const [customers,          setCustomers]          = useState([]);
-  const [services,           setServices]           = useState([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState('');
-  const [items,              setItems]              = useState([]);
-  const [loading,            setLoading]            = useState(false);
-  const [dataLoading,        setDataLoading]        = useState(true);
-  const [isOfflineError,     setIsOfflineError]     = useState(false);
-  const { id } = useParams();
-  const isEditing = Boolean(id);
-  const [existingInvoice, setExistingInvoice] = useState(null);
-  const navigate = useNavigate();
+  const [customers,      setCustomers]      = useState([]);
+  const [services,       setServices]       = useState([]);
+  const [customerId,     setCustomerId]     = useState('');
+  const [periodFrom,     setPeriodFrom]     = useState('');
+  const [periodTo,       setPeriodTo]       = useState('');
+  const [availableBills, setAvailableBills] = useState([]);
+  const [selectedBillIds, setSelectedBillIds] = useState(new Set());
+  const [aggregatedItems, setAggregatedItems] = useState([]);
+  const [billsLoading,   setBillsLoading]   = useState(false);
+  const [dataLoading,    setDataLoading]    = useState(true);
+  const [saving,         setSaving]         = useState(false);
+  const [isOfflineError, setIsOfflineError] = useState(false);
+  const [fetched,        setFetched]        = useState(false);
 
+  const navigate = useNavigate();
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
+  // ── Initial data load ──────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
-    if (!navigator.onLine) {
-      setIsOfflineError(true);
-      setDataLoading(false);
-      return;
-    }
+    if (!navigator.onLine) { setIsOfflineError(true); setDataLoading(false); return; }
     setDataLoading(true);
     setIsOfflineError(false);
     try {
-      const promises = [
+      const [custSnap, svcList] = await Promise.all([
         getDocs(collection(db, 'customers')),
-        fetchServicesFromDB(),
-      ];
-      if (isEditing) {
-        promises.push(getDoc(doc(db, 'invoices', id)));
-      }
-
-      const results = await Promise.all(promises);
-      const custSnapshot = results[0];
-      const svcList = results[1];
-      
+        fetchServicesSorted(),
+      ]);
       const custData = [];
-      custSnapshot.forEach(d => custData.push({ id: d.id, ...d.data() }));
+      custSnap.forEach(d => custData.push({ id: d.id, ...d.data() }));
       setCustomers(custData);
       setServices(svcList);
 
-      if (isEditing && results[2] && results[2].exists()) {
-        const invData = results[2].data();
-        setExistingInvoice(invData);
-        setSelectedCustomerId(invData.customerId);
-      }
+      // Default period = current month
+      const now   = new Date();
+      const from  = startOfMonth(now);
+      const to    = endOfMonth(now);
+      setPeriodFrom(format(from, 'yyyy-MM-dd'));
+      setPeriodTo(format(to,   'yyyy-MM-dd'));
+
       clearWasOffline();
     } catch (err) {
       console.error('Error loading data:', err);
@@ -69,59 +83,87 @@ export default function InvoiceCreate() {
     } finally {
       setDataLoading(false);
     }
-  }, [id, isEditing, reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { loadData(); }, [id, isEditing]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isOnline && wasOffline) loadData(); }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-reload on reconnect
-  useEffect(() => {
-    if (isOnline && wasOffline) loadData();
-  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-build line items whenever customer or services change
-  useEffect(() => {
-    if (!selectedCustomerId || services.length === 0) {
-      setItems([]);
+  // ── Fetch uninvoiced bills for selected customer + period ──────────────────
+  const fetchBills = async () => {
+    if (!customerId || !periodFrom || !periodTo) {
+      alert('Please select a customer and date range first.');
       return;
     }
-    const customer = customers.find(c => c.id === selectedCustomerId);
-    const initialItems = services.map(svc => {
-      if (isEditing && existingInvoice && existingInvoice.customerId === selectedCustomerId) {
-        const existingItem = existingInvoice.items.find(i => i.id === svc.id);
-        if (existingItem) {
-          return { ...existingItem };
-        }
-      }
+    setBillsLoading(true);
+    setFetched(false);
+    setAvailableBills([]);
+    setSelectedBillIds(new Set());
+    setAggregatedItems([]);
+    try {
+      const billSnap = await getDocs(collection(db, 'bills'));
+      const allBills = [];
+      billSnap.forEach(d => allBills.push({ id: d.id, ...d.data() }));
 
-      let price = svc.defaultPrice;
-      if (
-        customer?.customPrices &&
-        customer.customPrices[svc.id] !== undefined &&
-        customer.customPrices[svc.id] !== ''
-      ) {
-        price = customer.customPrices[svc.id];
-      }
-      return { id: svc.id, name: svc.name, quantity: 0, unitPrice: price, total: 0 };
-    });
-    setItems(initialItems);
-  }, [selectedCustomerId, customers, services, isEditing, existingInvoice]);
+      const fromTs = new Date(periodFrom).setHours(0, 0, 0, 0);
+      const toTs   = new Date(periodTo).setHours(23, 59, 59, 999);
 
-  const handleItemChange = (index, field, value) => {
-    const newItems = [...items];
-    newItems[index][field] = Number(value);
-    if (field === 'quantity' || field === 'unitPrice') {
-      newItems[index].total = newItems[index].quantity * newItems[index].unitPrice;
+      const filtered = allBills.filter(b =>
+        b.customerId === customerId &&
+        !b.invoiceId &&               // only uninvoiced
+        b.date >= fromTs &&
+        b.date <= toTs
+      );
+      filtered.sort((a, b) => a.date - b.date);
+      setAvailableBills(filtered);
+      // Auto-select all fetched bills
+      setSelectedBillIds(new Set(filtered.map(b => b.id)));
+      setFetched(true);
+    } catch (err) {
+      console.error('Error fetching bills:', err);
+      reportError(err);
+      alert('Failed to fetch bills.');
+    } finally {
+      setBillsLoading(false);
     }
-    setItems(newItems);
   };
 
-  const calculateTotal = () => items.reduce((sum, item) => sum + item.total, 0);
+  // ── Re-aggregate whenever selection changes ────────────────────────────────
+  useEffect(() => {
+    const selected = availableBills.filter(b => selectedBillIds.has(b.id));
+    const sortOrder = {};
+    services.forEach((s, i) => { sortOrder[s.id] = i; });
+    const agg = aggregateBillItems(selected).sort((a, b) => {
+      const ao = sortOrder[a.id] ?? Infinity;
+      const bo = sortOrder[b.id] ?? Infinity;
+      return ao !== bo ? ao - bo : a.name.localeCompare(b.name);
+    });
+    setAggregatedItems(agg);
+  }, [selectedBillIds, availableBills, services]);
 
+  const toggleBill = (billId) => {
+    setSelectedBillIds(prev => {
+      const next = new Set(prev);
+      next.has(billId) ? next.delete(billId) : next.add(billId);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selectedBillIds.size === availableBills.length) {
+      setSelectedBillIds(new Set());
+    } else {
+      setSelectedBillIds(new Set(availableBills.map(b => b.id)));
+    }
+  };
+
+  const totalAmount = aggregatedItems.reduce((s, i) => s + i.total, 0);
+
+  // ── Invoice number generation ──────────────────────────────────────────────
   const generateInvoiceNumber = async () => {
-    const today   = new Date();
-    const dateStr = format(today, 'yyyyMMdd');
-    const counterRef = doc(db, 'counters', `invoice_${dateStr}`);
-    let newSequence = 1;
+    const now     = new Date();
+    const monthKey = format(now, 'yyyyMM');
+    const counterRef = doc(db, 'counters', `invoice_${monthKey}`);
+    let newSequence  = 1;
 
     await runTransaction(db, async (transaction) => {
       const counterDoc = await transaction.get(counterRef);
@@ -133,68 +175,62 @@ export default function InvoiceCreate() {
       }
     });
 
-    return `DL-${dateStr}-${String(newSequence).padStart(3, '0')}`;
+    return `INV-${monthKey}-${String(newSequence).padStart(3, '0')}`;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const activeItems = items.filter(item => item.quantity > 0);
-    if (activeItems.length === 0) {
-      alert('Please add at least one item with a quantity greater than 0');
+  // ── Save invoice ───────────────────────────────────────────────────────────
+  const handleGenerateInvoice = async () => {
+    if (selectedBillIds.size === 0) {
+      alert('Please select at least one bill to include in the invoice.');
       return;
     }
-    setLoading(true);
+    setSaving(true);
     try {
-      const customer = customers.find(c => c.id === selectedCustomerId);
-      const newTotal = calculateTotal();
-      
-      if (isEditing) {
-        const amountPaid = existingInvoice?.amountPaid || 0;
-        const balanceAmount = newTotal - amountPaid;
-        let status = 'unpaid';
-        if (amountPaid > 0) {
-          status = amountPaid >= newTotal ? 'paid' : 'partial';
-        }
+      const customer  = customers.find(c => c.id === customerId);
+      const invoiceNumber = await generateInvoiceNumber();
 
-        await updateDoc(doc(db, 'invoices', id), {
-          customerId:   customer.id,
-          customerName: customer.name,
-          items:        activeItems,
-          totalAmount:  newTotal,
-          amountPaid,
-          balanceAmount,
-          status
-        });
-      } else {
-        const invoiceNumber = await generateInvoiceNumber();
-        await setDoc(doc(db, 'invoices', invoiceNumber), {
-          invoiceNumber,
-          customerId:   customer.id,
-          customerName: customer.name,
-          date:         Date.now(),
-          items:        activeItems,
-          totalAmount:  newTotal,
-          amountPaid:   0,
-          balanceAmount: newTotal,
-          status:       'unpaid'
+      // Save invoice doc
+      await setDoc(doc(db, 'invoices', invoiceNumber), {
+        invoiceNumber,
+        customerId:    customer.id,
+        customerName:  customer.name,
+        invoiceDate:   Date.now(),
+        periodFrom:    new Date(periodFrom).setHours(0, 0, 0, 0),
+        periodTo:      new Date(periodTo).setHours(23, 59, 59, 999),
+        billIds:       [...selectedBillIds],
+        items:         aggregatedItems,
+        totalAmount,
+        amountPaid:    0,
+        balanceAmount: totalAmount,
+        paymentStatus: 'unpaid',
+      });
+
+      // Mark each included bill as invoiced (batch)
+      const batch = writeBatch(db);
+      for (const billId of selectedBillIds) {
+        batch.update(doc(db, 'bills', billId), {
+          invoiceId: invoiceNumber,
+          status:    'invoiced',
         });
       }
-      navigate('/invoices');
-    } catch (error) {
-      console.error('Error saving invoice:', error);
-      reportError(error);
-      if (isNetworkError(error)) {
-        alert('No internet connection. Please check your network and try again.');
+      await batch.commit();
+
+      navigate(`/invoices/${invoiceNumber}`);
+    } catch (err) {
+      console.error('Error generating invoice:', err);
+      reportError(err);
+      if (isNetworkError(err)) {
+        alert('No internet connection. Please check your network.');
       } else {
-        alert('Failed to save invoice.');
+        alert('Failed to generate invoice.');
       }
+    } finally {
+      setSaving(false);
     }
-    setLoading(false);
   };
 
-  if (!dataLoading && isOfflineError) {
-    return <OfflineScreen onRetry={loadData} />;
-  }
+  // ── Render ─────────────────────────────────────────────────────────────────
+  if (!dataLoading && isOfflineError) return <OfflineScreen onRetry={loadData} />;
 
   if (dataLoading) {
     return (
@@ -209,95 +245,180 @@ export default function InvoiceCreate() {
   }
 
   return (
-    <div className="card">
-      <h2 className="card-title">{isEditing ? 'Edit Invoice' : 'Create New Invoice'}</h2>
+    <div>
+      {/* Step 1 — Select Customer & Period */}
+      <div className="card">
+        <h2 className="card-title">Generate Monthly Invoice</h2>
 
-      {/* Customer Selector */}
-      <div className="form-group">
-        <label htmlFor="invoice-customer">Select Customer</label>
-        <select
-          id="invoice-customer"
-          className="form-control"
-          value={selectedCustomerId}
-          onChange={e => setSelectedCustomerId(e.target.value)}
-        >
-          <option value="">-- Choose a customer --</option>
-          {customers.map(c => (
-            <option key={c.id} value={c.id}>{c.name} - {c.phone}</option>
-          ))}
-        </select>
+        <div className="invoice-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+          <div className="form-group">
+            <label htmlFor="inv-customer">Customer</label>
+            <select
+              id="inv-customer"
+              className="form-control"
+              value={customerId}
+              onChange={e => { setCustomerId(e.target.value); setFetched(false); setAvailableBills([]); setAggregatedItems([]); setSelectedBillIds(new Set()); }}
+            >
+              <option value="">-- Select customer --</option>
+              {customers.map(c => (
+                <option key={c.id} value={c.id}>{c.name} - {c.phone}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="inv-from">From Date</label>
+            <input
+              id="inv-from"
+              type="date"
+              className="form-control"
+              value={periodFrom}
+              onChange={e => { setPeriodFrom(e.target.value); setFetched(false); }}
+            />
+          </div>
+          <div className="form-group">
+            <label htmlFor="inv-to">To Date</label>
+            <input
+              id="inv-to"
+              type="date"
+              className="form-control"
+              value={periodTo}
+              onChange={e => { setPeriodTo(e.target.value); setFetched(false); }}
+            />
+          </div>
+        </div>
+
+        <div className="action-row" style={{ marginTop: '8px' }}>
+          <button
+            className="btn btn-primary"
+            onClick={fetchBills}
+            disabled={billsLoading || !customerId || !periodFrom || !periodTo}
+          >
+            {billsLoading ? 'Fetching...' : '🔍 Fetch Uninvoiced Bills'}
+          </button>
+        </div>
       </div>
 
-      {selectedCustomerId && (
-        <form onSubmit={handleSubmit}>
-          {/* Invoice Items Table */}
+      {/* Step 2 — Select Bills */}
+      {fetched && (
+        <div className="card">
+          <h3 className="card-title">Select Bills to Include</h3>
+
+          {availableBills.length === 0 ? (
+            <p className="text-muted">No uninvoiced bills found for this customer in the selected period.</p>
+          ) : (
+            <>
+              <div className="table-responsive">
+                <table className="table card-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '40px' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedBillIds.size === availableBills.length}
+                          onChange={toggleAll}
+                          style={{ cursor: 'pointer' }}
+                          title="Select all"
+                        />
+                      </th>
+                      <th>Bill #</th>
+                      <th>Date</th>
+                      <th>Items</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {availableBills.map(bill => (
+                      <tr
+                        key={bill.id}
+                        onClick={() => toggleBill(bill.id)}
+                        style={{ cursor: 'pointer', background: selectedBillIds.has(bill.id) ? 'var(--primary-light)' : '' }}
+                      >
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedBillIds.has(bill.id)}
+                            onChange={() => toggleBill(bill.id)}
+                            onClick={e => e.stopPropagation()}
+                            style={{ cursor: 'pointer' }}
+                          />
+                        </td>
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{bill.billNumber || bill.id}</td>
+                        <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
+                          {bill.date ? format(new Date(bill.date), 'dd MMM yyyy') : ''}
+                        </td>
+                        <td style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>
+                          {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
+                        </td>
+                        <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>₹{Number(bill.totalAmount).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: '6px' }}>
+                {selectedBillIds.size} of {availableBills.length} bill{availableBills.length > 1 ? 's' : ''} selected
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Step 3 — Consolidated Preview */}
+      {aggregatedItems.length > 0 && (
+        <div className="card">
+          <h3 className="card-title">Consolidated Invoice Preview</h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-light)', marginBottom: '12px' }}>
+            Items with same service and same rate are merged. Different rates remain separate.
+          </p>
+
           <div className="table-responsive">
             <table className="table card-table">
               <thead>
                 <tr>
+                  <th>#</th>
                   <th>Service</th>
                   <th>Qty</th>
-                  <th>Price (₹)</th>
-                  <th>Total (₹)</th>
+                  <th>Rate (₹)</th>
+                  <th>Amount (₹)</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, index) => (
-                  <tr key={item.id}>
-                    <td data-label="Service" style={{ minWidth: '100px' }}>{item.name}</td>
-                    <td data-label="Qty" style={{ minWidth: '72px' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        className="form-control"
-                        value={item.quantity || ''}
-                        onChange={e => handleItemChange(index, 'quantity', e.target.value)}
-                        inputMode="numeric"
-                        placeholder="0"
-                      />
-                    </td>
-                    <td data-label="Price" style={{ minWidth: '86px' }}>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        className="form-control"
-                        value={item.unitPrice}
-                        onChange={e => handleItemChange(index, 'unitPrice', e.target.value)}
-                        inputMode="decimal"
-                      />
-                    </td>
-                    <td data-label="Total" style={{ whiteSpace: 'nowrap', fontWeight: '500', textAlign: 'right', minWidth: '72px' }}>
-                      ₹{item.total.toFixed(2)}
-                    </td>
+                {aggregatedItems.map((item, i) => (
+                  <tr key={`${item.id}-${item.unitPrice}`}>
+                    <td style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>{i + 1}</td>
+                    <td style={{ fontWeight: 500 }}>{item.name}</td>
+                    <td style={{ textAlign: 'center' }}>{item.quantity}</td>
+                    <td style={{ textAlign: 'right' }}>₹{Number(item.unitPrice).toFixed(2)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(item.total).toFixed(2)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {/* Totals */}
           <div className="total-section">
-            <div className="total-row">
-              <span>Subtotal:</span>
-              <span>₹{calculateTotal().toFixed(2)}</span>
-            </div>
             <div className="total-row grand-total">
-              <span>Total:</span>
-              <span>₹{calculateTotal().toFixed(2)}</span>
+              <span>Invoice Total:</span>
+              <span>₹{totalAmount.toFixed(2)}</span>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="action-row">
-            <button type="submit" disabled={loading} className="btn btn-primary">
-              {loading ? 'Saving...' : (isEditing ? 'Update Invoice' : 'Save Invoice')}
+          <div className="action-row" style={{ marginTop: '16px' }}>
+            <button
+              className="btn btn-primary"
+              onClick={handleGenerateInvoice}
+              disabled={saving}
+            >
+              {saving ? 'Generating...' : '📄 Generate & Save Invoice'}
             </button>
-            <button type="button" onClick={() => navigate('/')} className="btn btn-secondary">
+            <button
+              className="btn btn-secondary"
+              onClick={() => navigate('/invoices')}
+            >
               Cancel
             </button>
           </div>
-        </form>
+        </div>
       )}
     </div>
   );

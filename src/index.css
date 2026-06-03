@@ -142,6 +142,48 @@ video {
   border-bottom: 2px solid rgba(255, 255, 255, 0.8);
 }
 
+/* Mobile Bottom Navigation */
+@media (max-width: 767px) {
+  .nav-links {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    background-color: var(--white);
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    justify-content: space-around;
+    padding: 8px 4px;
+    z-index: 1000;
+    padding-bottom: env(safe-area-inset-bottom, 8px);
+    /* PWA Safe Area */
+  }
+
+  .nav-links a {
+    flex-direction: column;
+    color: var(--text-light);
+    font-size: 0.65rem;
+    padding: 4px;
+    gap: 4px;
+    border-bottom: none !important;
+    border-top: 2px solid transparent;
+    opacity: 1;
+    border-radius: 0;
+    min-width: 50px;
+    text-align: center;
+  }
+
+  .nav-links a.active {
+    color: var(--primary);
+    background: none;
+    border-top: 2px solid var(--primary);
+  }
+
+  .nav-links a span.nav-label {
+    display: block;
+    margin-top: 2px;
+  }
+}
+
 .btn-icon-nav {
   padding: 6px 8px;
   border-radius: 4px;
@@ -158,6 +200,27 @@ video {
 .btn-icon-nav:hover {
   opacity: 1;
   background-color: rgba(255, 255, 255, 0.15);
+}
+
+@media (max-width: 767px) {
+  .btn-icon-nav {
+    color: var(--text-light);
+    flex-direction: column;
+    font-size: 0.65rem;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 0;
+  }
+
+  .btn-icon-nav span.nav-label {
+    display: block;
+    margin-top: 2px;
+  }
+
+  .btn-icon-nav:hover {
+    background: none;
+    color: var(--primary);
+  }
 }
 
 /* Header structural tweaks on tablet+ */
@@ -181,6 +244,8 @@ video {
   max-width: 1200px;
   margin: 0 auto;
   min-width: 0;
+  padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  /* Space for bottom nav on mobile */
 }
 
 @media (min-width: 480px) {
@@ -198,13 +263,19 @@ video {
 /* ===== CARDS ===== */
 .card {
   background: var(--white);
-  border-radius: 8px;
-  padding: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.03);
   margin-bottom: 12px;
   width: 100%;
   min-width: 0;
   overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
 }
 
 @media (min-width: 480px) {
@@ -291,18 +362,22 @@ select.form-control:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 10px 16px;
+  gap: 8px;
+  padding: 10px 18px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 0.9rem;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   text-decoration: none;
   white-space: nowrap;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+}
+
+.btn:active {
+  transform: scale(0.98);
 }
 
 .btn-primary {
@@ -559,6 +634,20 @@ select.form-control:hover {
   }
 }
 
+/* Sticky Total Section on Mobile */
+@media (max-width: 599px) {
+  .sticky-mobile-total {
+    position: sticky;
+    bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    /* Above bottom nav */
+    z-index: 50;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
+    margin: 16px -16px -16px -16px;
+    border-radius: 0 0 12px 12px;
+    background: var(--primary-light);
+  }
+}
+
 /* ===== FLEX BETWEEN ===== */
 .flex-between {
   display: flex;
@@ -616,15 +705,22 @@ select.form-control:hover {
 
 .dashboard-card {
   background: var(--white);
-  border-radius: 8px;
+  border-radius: 12px;
   /* tighter padding on mobile for 3-col */
-  padding: 12px 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 16px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.03);
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dashboard-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
 }
 
 @media (min-width: 480px) {
@@ -912,6 +1008,12 @@ label {
     border-bottom: 1px solid #f0f0f0;
     padding: 8px 0;
     text-align: right;
+    color: var(--text);
+  }
+
+  .card-table td[data-label="Service"] {
+    font-weight: 700;
+    font-size: 0.95rem;
   }
 
   .card-table td:last-child {
@@ -925,6 +1027,8 @@ label {
     margin-right: 12px;
     color: var(--text-light);
     font-size: 0.85rem;
+    white-space: nowrap;
+    min-width: 60px;
   }
 }
 
@@ -954,13 +1058,25 @@ label {
    when back online (green flash).
    =================================================================== */
 @keyframes offlineBannerSlideDown {
-  from { transform: translateY(-100%); opacity: 0; }
-  to   { transform: translateY(0);     opacity: 1; }
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 @keyframes offlineBannerFadeOut {
-  from { opacity: 1; }
-  to   { opacity: 0; }
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 .offline-banner {
@@ -1033,8 +1149,15 @@ body:has(.offline-banner) .filters-section {
    Centered card shown when data cannot be loaded due to no network.
    =================================================================== */
 @keyframes offlineScreenFadeIn {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .offline-screen {
@@ -1104,8 +1227,13 @@ body:has(.offline-banner) .filters-section {
    Replaces plain "Loading..." text with an animated shimmer bar set.
    =================================================================== */
 @keyframes shimmer {
-  0%   { background-position: -400px 0; }
-  100% { background-position:  400px 0; }
+  0% {
+    background-position: -400px 0;
+  }
+
+  100% {
+    background-position: 400px 0;
+  }
 }
 
 .loading-pulse {
@@ -1119,12 +1247,124 @@ body:has(.offline-banner) .filters-section {
   height: 14px;
   width: 100%;
   border-radius: 6px;
-  background: linear-gradient(
-    90deg,
-    #f0f0f0 25%,
-    #e0e8f0 50%,
-    #f0f0f0 75%
-  );
+  background: linear-gradient(90deg,
+      #f0f0f0 25%,
+      #e0e8f0 50%,
+      #f0f0f0 75%);
   background-size: 800px 100%;
   animation: shimmer 1.4s infinite linear;
+}
+
+/* ===================================================================
+   STATUS BADGES
+   Used in BillList, Dashboard, InvoiceList.
+   =================================================================== */
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.badge-invoiced {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.badge-pending {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+/* ===================================================================
+   SUMMARY BAR
+   Shown above BillList when uninvoiced bills exist.
+   =================================================================== */
+.summary-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--primary-light);
+  border: 1px solid #c8dff5;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 0.88rem;
+}
+
+.summary-bar strong {
+  color: var(--primary);
+}
+
+/* ===================================================================
+   ALERT WARNING
+   =================================================================== */
+.alert-warning {
+  background-color: #fff8e1;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+}
+
+/* ===================================================================
+   INVOICE DETAIL PAGE
+   =================================================================== */
+.invoice-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--primary-light);
+}
+
+.invoice-detail-total {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.detail-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.detail-info-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.detail-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-light);
+}
+
+.detail-value {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ===================================================================
+   4-COLUMN DASHBOARD CARDS
+   =================================================================== */
+@media (max-width: 479px) {
+  .dashboard-cards[style*="repeat(4"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
 }

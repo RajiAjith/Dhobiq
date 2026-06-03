@@ -7,8 +7,16 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import CustomerList from './pages/CustomerList';
 import CustomerForm from './pages/CustomerForm';
-import InvoiceHistory from './pages/InvoiceHistory';
+
+// Bill module (replaces old Invoice as daily entry)
+import BillList   from './pages/BillList';
+import BillCreate from './pages/BillCreate';
+
+// Invoice module (new consolidated invoice)
+import InvoiceList   from './pages/InvoiceList';
 import InvoiceCreate from './pages/InvoiceCreate';
+import InvoiceDetail from './pages/InvoiceDetail';
+
 import ServiceList from './pages/ServiceList';
 import InstallPrompt from './components/InstallPrompt';
 import OfflineBanner from './components/OfflineBanner';
@@ -30,14 +38,30 @@ function AppRoutes() {
           </PrivateRoute>
         }
       >
-        <Route index           element={<Dashboard />} />
-        <Route path="customers"        element={<CustomerList />} />
-        <Route path="customers/new"    element={<CustomerForm />} />
-        <Route path="customers/:id"    element={<CustomerForm />} />
-        <Route path="invoices"         element={<InvoiceHistory />} />
-        <Route path="create-invoice"   element={<InvoiceCreate />} />
-        <Route path="edit-invoice/:id" element={<InvoiceCreate />} />
-        <Route path="services"         element={<ServiceList />} />
+        {/* Dashboard */}
+        <Route index element={<Dashboard />} />
+
+        {/* Customers */}
+        <Route path="customers"      element={<CustomerList />} />
+        <Route path="customers/new"  element={<CustomerForm />} />
+        <Route path="customers/:id"  element={<CustomerForm />} />
+
+        {/* Bills (daily entries) */}
+        <Route path="bills"             element={<BillList />} />
+        <Route path="bills/new"         element={<BillCreate />} />
+        <Route path="bills/:id/edit"    element={<BillCreate />} />
+
+        {/* Invoices (consolidated monthly) */}
+        <Route path="invoices"          element={<InvoiceList />} />
+        <Route path="invoices/new"      element={<InvoiceCreate />} />
+        <Route path="invoices/:id"      element={<InvoiceDetail />} />
+
+        {/* Services */}
+        <Route path="services" element={<ServiceList />} />
+
+        {/* Legacy URL redirects — keep old bookmarks working */}
+        <Route path="create-invoice"   element={<Navigate to="/bills/new"  replace />} />
+        <Route path="edit-invoice/:id" element={<Navigate to="/bills"      replace />} />
       </Route>
     </Routes>
   );
@@ -48,10 +72,8 @@ function App() {
     <NetworkProvider>
       <AuthProvider>
         <Router>
-          {/* Global offline banner — always visible regardless of route */}
           <OfflineBanner />
           <AppRoutes />
-          {/* PWA install prompt — rendered outside routes so it's always visible */}
           <InstallPrompt />
         </Router>
       </AuthProvider>

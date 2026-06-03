@@ -1,12 +1,12 @@
 import React from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, Home, Users, FileText, PlusCircle, Settings } from 'lucide-react';
+import { LogOut, Home, Users, Receipt, FileText, Settings } from 'lucide-react';
 
 export default function Layout() {
   const { logout } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const navigate   = useNavigate();
+  const location   = useLocation();
 
   async function handleLogout() {
     try {
@@ -19,7 +19,7 @@ export default function Layout() {
 
   const isActive = (path) =>
     location.pathname === path ||
-      (path !== '/' && location.pathname.startsWith(path))
+    (path !== '/' && location.pathname.startsWith(path))
       ? 'active'
       : '';
 
@@ -41,17 +41,17 @@ export default function Layout() {
             <Home size={18} />
             <span className="nav-label">Home</span>
           </Link>
+          <Link to="/bills" className={isActive('/bills')} title="Bills">
+            <Receipt size={18} />
+            <span className="nav-label">Bills</span>
+          </Link>
+          <Link to="/invoices" className={isActive('/invoices')} title="Invoices">
+            <FileText size={18} />
+            <span className="nav-label">Invoice</span>
+          </Link>
           <Link to="/customers" className={isActive('/customers')} title="Customers">
             <Users size={18} />
             <span className="nav-label">Customers</span>
-          </Link>
-          <Link to="/invoices" className={isActive('/invoices')} title="Invoice History">
-            <FileText size={18} />
-            <span className="nav-label">History</span>
-          </Link>
-          <Link to="/create-invoice" className={isActive('/create-invoice')} title="New Invoice">
-            <PlusCircle size={18} />
-            <span className="nav-label">New</span>
           </Link>
           <Link to="/services" className={isActive('/services')} title="Services">
             <Settings size={18} />
@@ -59,6 +59,7 @@ export default function Layout() {
           </Link>
           <button onClick={handleLogout} className="btn-icon-nav" title="Logout">
             <LogOut size={18} />
+            <span className="nav-label">Logout</span>
           </button>
         </nav>
       </header>

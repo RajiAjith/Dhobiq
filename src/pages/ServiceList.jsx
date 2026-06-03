@@ -4,45 +4,44 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
-import { Edit, Trash2, Plus, Check, X, Download } from 'lucide-react';
+import { sortServices } from '../utils/serviceHelpers';
+import { Edit, Trash2, Plus, Check, X, Download, ArrowUp, ArrowDown } from 'lucide-react';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 
 export default function ServiceList() {
-  const [services, setServices] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [services,       setServices]       = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [saving,         setSaving]         = useState(false);
   const [isOfflineError, setIsOfflineError] = useState(false);
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
-  // Inline add form state
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newPrice, setNewPrice] = useState('');
+  // Add form state
+  const [showAddForm, setShowAddForm]   = useState(false);
+  const [newName,     setNewName]       = useState('');
+  const [newPrice,    setNewPrice]      = useState('');
+  const [newOrder,    setNewOrder]      = useState('');
 
-  // Inline edit state
-  const [editId, setEditId] = useState(null);
-  const [editName, setEditName] = useState('');
+  // Edit state
+  const [editId,    setEditId]    = useState(null);
+  const [editName,  setEditName]  = useState('');
   const [editPrice, setEditPrice] = useState('');
+  const [editOrder, setEditOrder] = useState('');
 
-  // Delete confirmation
+  // Delete confirm
   const [deleteId, setDeleteId] = useState(null);
 
+  // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchServices = useCallback(async () => {
-    if (!navigator.onLine) {
-      setIsOfflineError(true);
-      setLoading(false);
-      return;
-    }
+    if (!navigator.onLine) { setIsOfflineError(true); setLoading(false); return; }
     setLoading(true);
     setIsOfflineError(false);
     try {
       const snapshot = await getDocs(collection(db, 'services'));
       const data = [];
       snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
-      data.sort((a, b) => a.name.localeCompare(b.name));
-      setServices(data);
+      setServices(sortServices(data));
       clearWasOffline();
     } catch (err) {
       console.error('Error fetching services:', err);
@@ -54,21 +53,18 @@ export default function ServiceList() {
   }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchServices(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isOnline && wasOffline) fetchServices(); }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-reload on reconnect
-  useEffect(() => {
-    if (isOnline && wasOffline) fetchServices();
-  }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // ── Seed defaults ──────────────────────────────────────────────────────────
   const handleSeedDefaults = async () => {
     if (!window.confirm('Import default services (Bedsheet, Shirt, etc.)?')) return;
     setSaving(true);
     try {
-      // Add each fallback service to Firestore
       const promises = FALLBACK_SERVICES.map(svc =>
         addDoc(collection(db, 'services'), {
-          name: svc.name,
-          defaultPrice: svc.defaultPrice
+          name:         svc.name,
+          defaultPrice: svc.defaultPrice,
+          sort_order:   svc.sort_order ?? null,
         })
       );
       await Promise.all(promises);
@@ -81,18 +77,18 @@ export default function ServiceList() {
     setSaving(false);
   };
 
-  // ── ADD ──────────────────────────────────────────────
+  // ── Add ────────────────────────────────────────────────────────────────────
   const handleAdd = async (e) => {
     e.preventDefault();
     if (!newName.trim() || newPrice === '') return;
     setSaving(true);
     try {
       await addDoc(collection(db, 'services'), {
-        name: newName.trim(),
-        defaultPrice: Number(newPrice)
+        name:         newName.trim(),
+        defaultPrice: Number(newPrice),
+        sort_order:   newOrder !== '' ? Number(newOrder) : null,
       });
-      setNewName('');
-      setNewPrice('');
+      setNewName(''); setNewPrice(''); setNewOrder('');
       setShowAddForm(false);
       await fetchServices();
     } catch (err) {
@@ -103,19 +99,16 @@ export default function ServiceList() {
     setSaving(false);
   };
 
-  // ── EDIT ─────────────────────────────────────────────
+  // ── Edit ───────────────────────────────────────────────────────────────────
   const startEdit = (svc) => {
     setEditId(svc.id);
     setEditName(svc.name);
     setEditPrice(svc.defaultPrice);
+    setEditOrder(svc.sort_order != null ? svc.sort_order : '');
     setDeleteId(null);
   };
 
-  const cancelEdit = () => {
-    setEditId(null);
-    setEditName('');
-    setEditPrice('');
-  };
+  const cancelEdit = () => { setEditId(null); setEditName(''); setEditPrice(''); setEditOrder(''); };
 
   const handleUpdate = async (e) => {
     e.preventDefault();
@@ -123,8 +116,9 @@ export default function ServiceList() {
     setSaving(true);
     try {
       await updateDoc(doc(db, 'services', editId), {
-        name: editName.trim(),
-        defaultPrice: Number(editPrice)
+        name:         editName.trim(),
+        defaultPrice: Number(editPrice),
+        sort_order:   editOrder !== '' ? Number(editOrder) : null,
       });
       cancelEdit();
       await fetchServices();
@@ -136,7 +130,30 @@ export default function ServiceList() {
     setSaving(false);
   };
 
-  // ── DELETE ────────────────────────────────────────────
+  // ── Quick reorder helpers ──────────────────────────────────────────────────
+  const moveService = async (idx, direction) => {
+    const newServices = [...services];
+    const swapIdx     = idx + direction;
+    if (swapIdx < 0 || swapIdx >= newServices.length) return;
+
+    setSaving(true);
+    try {
+      const aOrder = newServices[idx].sort_order    != null ? newServices[idx].sort_order    : idx + 1;
+      const bOrder = newServices[swapIdx].sort_order != null ? newServices[swapIdx].sort_order : swapIdx + 1;
+
+      await Promise.all([
+        updateDoc(doc(db, 'services', newServices[idx].id),    { sort_order: bOrder }),
+        updateDoc(doc(db, 'services', newServices[swapIdx].id), { sort_order: aOrder }),
+      ]);
+      await fetchServices();
+    } catch (err) {
+      console.error('Error reordering service:', err);
+      reportError(err);
+    }
+    setSaving(false);
+  };
+
+  // ── Delete ─────────────────────────────────────────────────────────────────
   const handleDelete = async (id) => {
     setSaving(true);
     try {
@@ -151,9 +168,7 @@ export default function ServiceList() {
     setSaving(false);
   };
 
-  if (!loading && isOfflineError) {
-    return <OfflineScreen onRetry={fetchServices} />;
-  }
+  if (!loading && isOfflineError) return <OfflineScreen onRetry={fetchServices} />;
 
   return (
     <div>
@@ -173,37 +188,33 @@ export default function ServiceList() {
       {/* Add Service Form */}
       {showAddForm && (
         <div className="card" style={{ borderLeft: '4px solid var(--primary)' }}>
-          <h3 style={{ color: 'var(--primary)', fontSize: '1rem', marginBottom: '12px' }}>
-            New Service
-          </h3>
+          <h3 style={{ color: 'var(--primary)', fontSize: '1rem', marginBottom: '12px' }}>New Service</h3>
           <form onSubmit={handleAdd}>
-            <div className="invoice-grid" style={{ marginBottom: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label htmlFor="svc-name">Service Name</label>
                 <input
-                  id="svc-name"
-                  type="text"
-                  className="form-control"
-                  value={newName}
-                  onChange={e => setNewName(e.target.value)}
-                  placeholder="e.g. Saree"
-                  required
-                  autoFocus
+                  id="svc-name" type="text" className="form-control"
+                  value={newName} onChange={e => setNewName(e.target.value)}
+                  placeholder="e.g. Saree" required autoFocus
                 />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label htmlFor="svc-price">Default Price (₹)</label>
                 <input
-                  id="svc-price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  className="form-control"
-                  value={newPrice}
+                  id="svc-price" type="number" min="0" step="0.01"
+                  className="form-control" value={newPrice}
                   onChange={e => setNewPrice(e.target.value)}
-                  placeholder="e.g. 50"
-                  inputMode="decimal"
-                  required
+                  placeholder="e.g. 50" inputMode="decimal" required
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label htmlFor="svc-order">Sort Order <span style={{ color: 'var(--text-light)', fontWeight: 400 }}>(optional)</span></label>
+                <input
+                  id="svc-order" type="number" min="1" step="1"
+                  className="form-control" value={newOrder}
+                  onChange={e => setNewOrder(e.target.value)}
+                  placeholder="e.g. 1"
                 />
               </div>
             </div>
@@ -212,9 +223,8 @@ export default function ServiceList() {
                 <Check size={16} /> {saving ? 'Saving...' : 'Save Service'}
               </button>
               <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => { setShowAddForm(false); setNewName(''); setNewPrice(''); }}
+                type="button" className="btn btn-secondary"
+                onClick={() => { setShowAddForm(false); setNewName(''); setNewPrice(''); setNewOrder(''); }}
               >
                 <X size={16} /> Cancel
               </button>
@@ -243,10 +253,8 @@ export default function ServiceList() {
                 </button>
               )}
               <button
-                className="btn btn-secondary w-100"
-                style={{ maxWidth: '250px' }}
-                onClick={handleSeedDefaults}
-                disabled={saving}
+                className="btn btn-secondary w-100" style={{ maxWidth: '250px' }}
+                onClick={handleSeedDefaults} disabled={saving}
               >
                 <Download size={18} /> {saving ? 'Importing...' : 'Import Default Services'}
               </button>
@@ -257,7 +265,7 @@ export default function ServiceList() {
             <table className="table card-table">
               <thead>
                 <tr>
-                  <th>#</th>
+                  <th style={{ width: '50px' }}>Order</th>
                   <th>Service Name</th>
                   <th>Default Price</th>
                   <th>Actions</th>
@@ -267,55 +275,59 @@ export default function ServiceList() {
                 {services.map((svc, idx) => (
                   <React.Fragment key={svc.id}>
                     <tr>
-                      <td data-label="#" style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>{idx + 1}</td>
+                      {/* Sort order + up/down buttons */}
+                      <td data-label="Order">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ color: 'var(--text-light)', fontSize: '0.82rem', minWidth: '18px' }}>
+                            {svc.sort_order != null ? svc.sort_order : '—'}
+                          </span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <button
+                              className="btn-icon" style={{ padding: '2px', minWidth: 'unset', minHeight: 'unset' }}
+                              onClick={() => moveService(idx, -1)} disabled={saving || idx === 0}
+                              title="Move up"
+                            >
+                              <ArrowUp size={12} />
+                            </button>
+                            <button
+                              className="btn-icon" style={{ padding: '2px', minWidth: 'unset', minHeight: 'unset' }}
+                              onClick={() => moveService(idx, 1)} disabled={saving || idx === services.length - 1}
+                              title="Move down"
+                            >
+                              <ArrowDown size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      </td>
 
                       {editId === svc.id ? (
-                        /* ── Inline Edit Row ── */
                         <>
                           <td data-label="Service Name">
-                            <input
-                              type="text"
-                              className="form-control"
-                              value={editName}
-                              onChange={e => setEditName(e.target.value)}
-                              autoFocus
-                            />
+                            <input type="text" className="form-control" value={editName} onChange={e => setEditName(e.target.value)} autoFocus />
                           </td>
                           <td data-label="Default Price">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              className="form-control"
-                              value={editPrice}
-                              onChange={e => setEditPrice(e.target.value)}
-                              inputMode="decimal"
-                            />
+                            <input type="number" min="0" step="0.01" className="form-control" value={editPrice} onChange={e => setEditPrice(e.target.value)} inputMode="decimal" />
                           </td>
-                          <td data-label="Actions">
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <button
-                                className="btn btn-primary"
-                                style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                                onClick={handleUpdate}
-                                disabled={saving}
-                                title="Save"
-                              >
+                          <td data-label="Actions" style={{ minWidth: '180px' }}>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <div className="form-group" style={{ marginBottom: 0 }}>
+                                <input
+                                  type="number" min="1" step="1"
+                                  className="form-control" style={{ maxWidth: '80px' }}
+                                  value={editOrder} onChange={e => setEditOrder(e.target.value)}
+                                  placeholder="Order"
+                                />
+                              </div>
+                              <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: '0.8rem' }} onClick={handleUpdate} disabled={saving} title="Save">
                                 <Check size={15} />
                               </button>
-                              <button
-                                className="btn btn-secondary"
-                                style={{ padding: '6px 10px', fontSize: '0.8rem' }}
-                                onClick={cancelEdit}
-                                title="Cancel"
-                              >
+                              <button className="btn btn-secondary" style={{ padding: '6px 10px', fontSize: '0.8rem' }} onClick={cancelEdit} title="Cancel">
                                 <X size={15} />
                               </button>
                             </div>
                           </td>
                         </>
                       ) : (
-                        /* ── Normal Row ── */
                         <>
                           <td data-label="Service Name" style={{ fontWeight: 500 }}>{svc.name}</td>
                           <td data-label="Default Price" style={{ whiteSpace: 'nowrap' }}>₹{Number(svc.defaultPrice).toFixed(2)}</td>
@@ -325,8 +337,7 @@ export default function ServiceList() {
                                 <Edit size={18} />
                               </button>
                               <button
-                                className="btn-icon delete"
-                                title="Delete"
+                                className="btn-icon delete" title="Delete"
                                 style={{ color: deleteId === svc.id ? 'var(--danger)' : undefined }}
                                 onClick={() => setDeleteId(deleteId === svc.id ? null : svc.id)}
                               >
@@ -342,30 +353,15 @@ export default function ServiceList() {
                     {deleteId === svc.id && (
                       <tr style={{ background: '#fff5f5' }}>
                         <td colSpan={4}>
-                          <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            flexWrap: 'wrap',
-                            gap: '10px',
-                            padding: '4px 0'
-                          }}>
+                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px', padding: '4px 0' }}>
                             <span style={{ fontSize: '0.88rem', color: 'var(--danger)', flex: 1 }}>
                               Delete <strong>{svc.name}</strong>? This cannot be undone.
                             </span>
                             <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                className="btn btn-danger"
-                                style={{ padding: '6px 12px', fontSize: '0.82rem' }}
-                                onClick={() => handleDelete(svc.id)}
-                                disabled={saving}
-                              >
+                              <button className="btn btn-danger" style={{ padding: '6px 12px', fontSize: '0.82rem' }} onClick={() => handleDelete(svc.id)} disabled={saving}>
                                 {saving ? 'Deleting...' : 'Yes, Delete'}
                               </button>
-                              <button
-                                className="btn btn-secondary"
-                                style={{ padding: '6px 12px', fontSize: '0.82rem' }}
-                                onClick={() => setDeleteId(null)}
-                              >
+                              <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.82rem' }} onClick={() => setDeleteId(null)}>
                                 Cancel
                               </button>
                             </div>
@@ -381,10 +377,11 @@ export default function ServiceList() {
         )}
       </div>
 
-      {/* Info tip */}
+      {/* Tip */}
       <div className="card" style={{ background: 'var(--primary-light)', boxShadow: 'none', padding: '12px 16px' }}>
         <p style={{ fontSize: '0.83rem', color: 'var(--primary)', margin: 0, lineHeight: 1.6 }}>
-          💡 <strong>Tip:</strong> Services added here automatically appear in New Invoice and Customer Custom Pricing.
+          💡 <strong>Tip:</strong> Use <strong>Sort Order</strong> to control the display order in Bills, Invoices, and PDFs. 
+          Use ↑↓ arrows for quick reordering, or type an order number when editing.
         </p>
       </div>
     </div>
