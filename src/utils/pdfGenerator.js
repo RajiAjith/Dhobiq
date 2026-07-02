@@ -1,6 +1,8 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 function arrayBufferToBase64(buffer) {
   let binary = '';
@@ -42,7 +44,7 @@ const WHITE = [255, 255, 255];
 const ALT_ROW = [248, 249, 250];
 const LOGO_URL = '/logo.png';
 
-function drawHeader(doc, title) {
+function drawHeader(doc, title, settings = null) {
   // Page background
   doc.setFillColor(...BG_GRAY);
   doc.rect(0, 0, 210, 297, 'F');
@@ -60,10 +62,10 @@ function drawHeader(doc, title) {
   doc.setTextColor(...BRAND_BLUE);
   doc.setFontSize(22);
   doc.setFont('Roboto', 'bold');
-  doc.text('Dhobiq Laundry', 48, 22);
+  doc.text(settings?.name || 'Dhobiq Laundry', 48, 22);
   doc.setFontSize(10);
   doc.setFont('Roboto', 'normal');
-  doc.text('Your Clothes Our Care!', 48, 29);
+  doc.text(settings?.tagline || 'Your Clothes Our Care!', 48, 29);
 
   // Document title (right side)
   doc.setFontSize(30);
@@ -71,17 +73,17 @@ function drawHeader(doc, title) {
   doc.text(title, 196, 28, { align: 'right' });
 }
 
-function drawFooter(doc) {
+function drawFooter(doc, settings = null) {
   doc.setFontSize(9);
   doc.setFont('Roboto', 'bold');
   doc.setTextColor(...BRAND_BLUE);
-  doc.text('Freshness Delivered to Your Doorstep', 105, 260, { align: 'center' });
+  doc.text(settings?.footerText || 'Freshness Delivered to Your Doorstep', 105, 260, { align: 'center' });
   doc.text('Thank you for your business!', 105, 266, { align: 'center' });
   doc.setFont('Roboto', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(80, 80, 80);
-  doc.text("Near MacDonald's | Thumpoly P.O, Alappuzha", 105, 274, { align: 'center' });
-  doc.text('Mob: +91-9061504910, +91-7902958593', 105, 279, { align: 'center' });
+  doc.text(settings?.address || "Near MacDonald's | Thumpoly P.O, Alappuzha", 105, 274, { align: 'center' });
+  doc.text(settings?.phone ? `Mob: ${settings.phone}` : 'Mob: +91-9061504910, +91-7902958593', 105, 279, { align: 'center' });
 }
 
 function drawItemsTable(doc, items, startY) {
@@ -182,9 +184,17 @@ function drawTotals(doc, totalAmount, finalY, amountPaid = null, balanceAmount =
  * @param {object} customer  - customer document from Firestore
  */
 export const generateBillPDF = async (bill, customer) => {
+  let settings = null;
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'general'));
+    if (snap.exists()) settings = snap.data();
+  } catch (e) {
+    console.error("PDF generation settings load failed", e);
+  }
+
   const doc = new jsPDF();
   await loadFonts(doc);
-  drawHeader(doc, 'Bill');
+  drawHeader(doc, 'Bill', settings);
 
   // Customer & Bill details
   const formattedDate = bill.date ? format(new Date(bill.date), 'MMMM dd, yyyy') : '';
@@ -227,7 +237,7 @@ export const generateBillPDF = async (bill, customer) => {
     doc.text(`Notes: ${bill.notes}`, 14, finalY + 38);
   }
 
-  drawFooter(doc);
+  drawFooter(doc, settings);
   doc.save(`Bill-${bill.billNumber || bill.id}-${customer?.name || 'customer'}.pdf`);
 };
 
@@ -241,9 +251,17 @@ export const generateBillPDF = async (bill, customer) => {
  * @param {Array}  bills     - array of bill documents included in this invoice
  */
 export const generateInvoicePDF = async (invoice, customer, bills = []) => {
+  let settings = null;
+  try {
+    const snap = await getDoc(doc(db, 'settings', 'general'));
+    if (snap.exists()) settings = snap.data();
+  } catch (e) {
+    console.error("PDF generation settings load failed", e);
+  }
+
   const doc = new jsPDF();
   await loadFonts(doc);
-  drawHeader(doc, 'Invoice');
+  drawHeader(doc, 'Invoice', settings);
 
   const invoiceDate = invoice.invoiceDate ? format(new Date(invoice.invoiceDate), 'MMMM dd, yyyy') : '';
   const periodFrom = invoice.periodFrom ? format(new Date(invoice.periodFrom), 'dd MMM yyyy') : '';
@@ -303,6 +321,6 @@ export const generateInvoicePDF = async (invoice, customer, bills = []) => {
     doc.text(wrapped, 14, refY + 5);
   }
 
-  drawFooter(doc);
+  drawFooter(doc, settings);
   doc.save(`Invoice-${invoice.invoiceNumber || invoice.id}-${customer?.name || 'customer'}.pdf`);
 };

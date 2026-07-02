@@ -3,21 +3,49 @@ import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Link } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth, isWithinInterval, subMonths } from 'date-fns';
-import { Receipt, Users, Settings, FileText, TrendingUp, AlertCircle, DollarSign, Activity } from 'lucide-react';
+import { 
+  Receipt, Users, Settings, FileText, TrendingUp, AlertCircle, 
+  DollarSign, Activity, CreditCard, Briefcase, ChevronRight, TrendingDown,
+  PieChart as PieIcon, BarChart3, HelpCircle
+} from 'lucide-react';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
+  ResponsiveContainer, BarChart, Bar, Legend, LineChart, Line, PieChart, Pie, Cell 
+} from 'recharts';
 import OfflineScreen from '../components/OfflineScreen';
 import { runBillsMigrationIfNeeded, runInvoicePaymentMigrationIfNeeded } from '../utils/migration';
 
+// Recharts theme colors matching our 2026 SaaS guidelines
+const COLORS = ['#003366', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
+
 export default function Dashboard() {
-  const [recentBills,    setRecentBills]    = useState([]);
-  const [analytics,      setAnalytics]      = useState({
+  const [recentBills, setRecentBills] = useState([]);
+  const [activeTab, setActiveTab] = useState('trends');
+  
+  const [analytics, setAnalytics] = useState({
+    // Summary Cards (10)
     totalRevenue: 0,
     monthlyRevenue: 0,
+    totalExpenses: 0,
+    monthlyExpenses: 0,
+    netProfit: 0,
     pendingPayments: 0,
+    totalCustomers: 0,
+    activeEmployees: 0,
     billsThisMonth: 0,
-    revenueData: []
+    invoicesThisMonth: 0,
+    
+    // 10 Chart Datasets
+    monthlyTrendData: [], // Rev, Exp, Profit trends (Charts 1, 2, 3, 4)
+    customerGrowthData: [], // Growth (Chart 5)
+    topCustomersData: [], // Customers by rev (Chart 6)
+    serviceUsageData: [], // Services by quantity (Chart 7)
+    topServicesData: [], // Services by revenue (Chart 8)
+    expenseBreakdownData: [], // Categories (Chart 9)
+    paymentStatusData: [] // Invoices paid/unpaid (Chart 10)
   });
+  
   const [loading,        setLoading]        = useState(true);
   const [error,          setError]          = useState(null);
   const [isOfflineError, setIsOfflineError] = useState(false);
@@ -25,29 +53,21 @@ export default function Dashboard() {
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
-  // ── Migration (runs silently in background once) ───────────────────────────
+  // Migrations (runs silently in background on mount)
   useEffect(() => {
     if (navigator.onLine) {
       Promise.all([
         runBillsMigrationIfNeeded(),
         runInvoicePaymentMigrationIfNeeded()
       ])
-        .then(([billsRes, invRes]) => {
-          if (billsRes.ran && billsRes.migrated > 0) {
-            console.log(`[Dashboard] Migration complete: ${billsRes.migrated} bills migrated`);
-          }
-          if (invRes.ran && invRes.migrated > 0) {
-            console.log(`[Dashboard] Migration complete: ${invRes.migrated} invoices updated with payment structure`);
-          }
-          setMigrationDone(true);
-        })
+        .then(() => setMigrationDone(true))
         .catch(() => setMigrationDone(true));
     } else {
       setMigrationDone(true);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  const fetchRecentBills = useCallback(async () => {
+  const fetchDashboardData = useCallback(async () => {
     if (!navigator.onLine) { setIsOfflineError(true); setLoading(false); return; }
     setLoading(true);
     setError(null);
@@ -56,64 +76,141 @@ export default function Dashboard() {
     let isMounted = true;
     const timeout = setTimeout(() => {
       if (isMounted) {
-        setError('Connection is taking longer than expected.');
+        setError('Database connection is taking longer than expected.');
         setIsOfflineError(true);
         setLoading(false);
       }
-    }, 15000);
+    }, 20000);
 
     try {
-      const q = query(collection(db, 'bills'), orderBy('date', 'desc'), limit(5));
-      const [billsSnap, allInvoicesSnap, allBillsSnap] = await Promise.all([
-        getDocs(q),
+      // 1. Parallel collection queries
+      const [
+        billsSnap, 
+        invoicesSnap, 
+        expensesSnap, 
+        customersSnap, 
+        employeesSnap, 
+        recentBillsSnap
+      ] = await Promise.all([
+        getDocs(collection(db, 'bills')),
         getDocs(collection(db, 'invoices')),
-        getDocs(collection(db, 'bills'))
+        getDocs(collection(db, 'expenses')),
+        getDocs(collection(db, 'customers')),
+        getDocs(collection(db, 'employees')),
+        getDocs(query(collection(db, 'bills'), orderBy('date', 'desc'), limit(5)))
       ]);
 
-      const bills = [];
-      billsSnap.forEach(d => bills.push({ id: d.id, ...d.data() }));
-
-      // Calculate Analytics
       const now = new Date();
       const currentMonthStart = startOfMonth(now);
       const currentMonthEnd = endOfMonth(now);
 
+      // --- Summary Metrics Initializers ---
       let totalRevenue = 0;
       let monthlyRevenue = 0;
+      let totalExpenses = 0;
+      let monthlyExpenses = 0;
       let pendingPayments = 0;
       let billsThisMonth = 0;
-
-      // Process Invoices for revenue
-      const monthlyDataMap = {};
+      let invoicesThisMonth = 0;
+      let totalCustomers = customersSnap.size;
       
-      // Initialize last 6 months
+      let activeEmployees = 0;
+      employeesSnap.forEach(d => {
+        if (d.data().status === 'active') activeEmployees++;
+      });
+
+      // --- Last 6 Months Map for Trend Charts ---
+      const monthlyDataMap = {};
       for (let i = 5; i >= 0; i--) {
         const d = subMonths(now, i);
-        monthlyDataMap[format(d, 'MMM yy')] = { name: format(d, 'MMM yy'), revenue: 0, pending: 0 };
+        const monthKey = format(d, 'MMM yy');
+        monthlyDataMap[monthKey] = { name: monthKey, revenue: 0, expenses: 0, profit: 0 };
       }
 
-      allInvoicesSnap.forEach(d => {
+      // --- Chart Aggregations Map ---
+      const customerSpendingMap = {};
+      const serviceUsageMap = {}; // quantity
+      const serviceRevenueMap = {}; // revenue
+      const expenseCategoryMap = {};
+      const paymentStatusCountMap = { paid: 0, partial: 0, unpaid: 0 };
+
+      // 2. Process Invoices
+      invoicesSnap.forEach(d => {
         const inv = d.data();
         const total = Number(inv.totalAmount) || 0;
         const paid = Number(inv.amountPaid) || 0;
         const balance = Number(inv.balanceAmount ?? total);
-        
+        const custName = inv.customerName || 'Unknown Customer';
+
         totalRevenue += paid;
         pendingPayments += balance;
 
         const invDate = new Date(inv.invoiceDate || Date.now());
+        const monthKey = format(invDate, 'MMM yy');
+        
+        // Month calculations
         if (isWithinInterval(invDate, { start: currentMonthStart, end: currentMonthEnd })) {
           monthlyRevenue += paid;
+          invoicesThisMonth++;
         }
 
-        const monthKey = format(invDate, 'MMM yy');
         if (monthlyDataMap[monthKey]) {
           monthlyDataMap[monthKey].revenue += paid;
-          monthlyDataMap[monthKey].pending += balance;
+        }
+
+        // Customer spending
+        customerSpendingMap[custName] = (customerSpendingMap[custName] || 0) + paid;
+
+        // Payment status counts
+        const status = inv.paymentStatus || inv.status || 'unpaid';
+        if (paymentStatusCountMap[status] !== undefined) {
+          paymentStatusCountMap[status]++;
+        } else {
+          paymentStatusCountMap['unpaid']++;
+        }
+
+        // Services aggregation from invoice items
+        if (inv.items && Array.isArray(inv.items)) {
+          inv.items.forEach(item => {
+            const name = item.name || 'Unspecified';
+            const qty = Number(item.quantity) || 0;
+            const itemTot = Number(item.total) || 0;
+
+            serviceUsageMap[name] = (serviceUsageMap[name] || 0) + qty;
+            serviceRevenueMap[name] = (serviceRevenueMap[name] || 0) + itemTot;
+          });
         }
       });
 
-      allBillsSnap.forEach(d => {
+      // 3. Process Expenses (includes auto-logged salaries)
+      expensesSnap.forEach(d => {
+        const exp = d.data();
+        const amt = Number(exp.amount) || 0;
+        const cat = exp.category || 'Miscellaneous';
+        const expDate = new Date(exp.date || Date.now());
+        const monthKey = format(expDate, 'MMM yy');
+
+        totalExpenses += amt;
+
+        if (isWithinInterval(expDate, { start: currentMonthStart, end: currentMonthEnd })) {
+          monthlyExpenses += amt;
+        }
+
+        if (monthlyDataMap[monthKey]) {
+          monthlyDataMap[monthKey].expenses += amt;
+        }
+
+        // Category breakdown
+        expenseCategoryMap[cat] = (expenseCategoryMap[cat] || 0) + amt;
+      });
+
+      // 4. Calculate Net Profits
+      Object.keys(monthlyDataMap).forEach(key => {
+        monthlyDataMap[key].profit = monthlyDataMap[key].revenue - monthlyDataMap[key].expenses;
+      });
+
+      // 5. Process Bills (count this month)
+      billsSnap.forEach(d => {
         const bill = d.data();
         const billDate = new Date(bill.date || Date.now());
         if (isWithinInterval(billDate, { start: currentMonthStart, end: currentMonthEnd })) {
@@ -121,131 +218,523 @@ export default function Dashboard() {
         }
       });
 
+      // 6. Format Chart Lists & Sort
+      // Customer spending list
+      const topCustomersData = Object.entries(customerSpendingMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+
+      // Service usage list (quantity)
+      const serviceUsageData = Object.entries(serviceUsageMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+
+      // Service revenue list
+      const topServicesData = Object.entries(serviceRevenueMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+
+      // Expense category breakdown list
+      const expenseBreakdownData = Object.entries(expenseCategoryMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value);
+
+      // Payment status list
+      const paymentStatusData = Object.entries(paymentStatusCountMap).map(([name, value]) => ({
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        value
+      }));
+
+      // Customer growth cumulative trend (sort customers by their sequence number)
+      const sortedCustomers = [];
+      customersSnap.forEach(d => {
+        const cust = d.data();
+        sortedCustomers.push({ id: d.id, ...cust });
+      });
+      // Sort chronologically using sequence IDs (e.g. DQ-C25-001)
+      sortedCustomers.sort((a, b) => a.id.localeCompare(b.id));
+
+      const customerGrowthData = sortedCustomers.map((cust, index) => ({
+        name: cust.name,
+        count: index + 1
+      })).slice(-15); // Show last 15 signups for clarity on mobile
+
+      const bills = [];
+      recentBillsSnap.forEach(d => bills.push({ id: d.id, ...d.data() }));
+
       if (isMounted) {
         setRecentBills(bills);
         setAnalytics({
           totalRevenue,
           monthlyRevenue,
+          totalExpenses,
+          monthlyExpenses,
+          netProfit: totalRevenue - totalExpenses,
           pendingPayments,
+          totalCustomers,
+          activeEmployees,
           billsThisMonth,
-          revenueData: Object.values(monthlyDataMap)
+          invoicesThisMonth,
+          
+          monthlyTrendData: Object.values(monthlyDataMap),
+          customerGrowthData,
+          topCustomersData,
+          serviceUsageData,
+          topServicesData,
+          expenseBreakdownData,
+          paymentStatusData
         });
         setError(null);
         setIsOfflineError(false);
         clearWasOffline();
       }
     } catch (err) {
-      console.error('Error fetching recent bills:', err);
+      console.error('Error fetching dashboard details:', err);
       reportError(err);
       if (isMounted) {
         if (isNetworkError(err)) setIsOfflineError(true);
-        else setError('Failed to connect to database: ' + err.message);
+        else setError('Database fetch failed: ' + err.message);
       }
     } finally {
       clearTimeout(timeout);
       if (isMounted) setLoading(false);
       isMounted = false;
     }
-  }, [reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reportError, clearWasOffline]);
 
-  useEffect(() => { fetchRecentBills(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (isOnline && wasOffline) fetchRecentBills(); }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchDashboardData(); }, []);
+  useEffect(() => { if (isOnline && wasOffline) fetchDashboardData(); }, [isOnline, wasOffline]);
 
-  if (!loading && isOfflineError) return <OfflineScreen onRetry={fetchRecentBills} />;
+  if (!loading && isOfflineError) return <OfflineScreen onRetry={fetchDashboardData} />;
 
   return (
     <div>
-      {/* Page Header */}
+      {/* Page Title Header */}
       <div className="flex-between mb-2">
-        <h2 className="card-title" style={{ border: 'none', margin: 0 }}>Dashboard</h2>
+        <div>
+          <h2 className="card-title" style={{ border: 'none', margin: 0 }}>Executive Dashboard</h2>
+          <p className="text-muted" style={{ fontSize: '0.82rem' }}>Laundry business performance, ledger summaries, and operational growth</p>
+        </div>
         <Link to="/bills/new" className="btn btn-primary">+ New Bill</Link>
       </div>
 
-      {/* Analytics Summary Cards */}
-      <div className="dashboard-cards" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))' }}>
-        <div className="dashboard-card" style={{ borderLeft: '4px solid var(--success)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--success)' }}>
-            <DollarSign size={20} />
-            <h3 style={{ margin: 0, color: 'var(--text-light)' }}>Monthly Rev</h3>
+      {/* Analytics Summary Cards (10 Cards Grid) */}
+      {loading ? (
+        <div className="card" style={{ height: '180px' }}>
+          <div className="loading-pulse">
+            <div className="loading-pulse__bar" style={{ width: '30%' }} />
+            <div className="loading-pulse__bar" />
           </div>
-          <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text)', margin: '8px 0' }}>
-            ₹{analytics.monthlyRevenue.toFixed(0)}
-          </p>
         </div>
-        
-        <div className="dashboard-card" style={{ borderLeft: '4px solid var(--danger)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--danger)' }}>
-            <AlertCircle size={20} />
-            <h3 style={{ margin: 0, color: 'var(--text-light)' }}>Pending</h3>
+      ) : (
+        <div className="dashboard-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+          {/* Card 1: Monthly Revenue */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--success)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <DollarSign size={14} className="text-success" /> Monthly Revenue
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              ₹{analytics.monthlyRevenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </p>
           </div>
-          <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text)', margin: '8px 0' }}>
-            ₹{analytics.pendingPayments.toFixed(0)}
-          </p>
+
+          {/* Card 2: Monthly Expenses */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--danger)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <TrendingDown size={14} className="text-danger" /> Monthly Expenses
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              ₹{analytics.monthlyExpenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </p>
+          </div>
+
+          {/* Card 3: Total Revenue */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--primary)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <TrendingUp size={14} style={{ color: 'var(--primary)' }} /> Total Revenue
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              ₹{analytics.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </p>
+          </div>
+
+          {/* Card 4: Total Expenses */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--warning)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <CreditCard size={14} className="text-warning" /> Total Expenses
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              ₹{analytics.totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </p>
+          </div>
+
+          {/* Card 5: Net Profit */}
+          <div className="dashboard-card" style={{ borderLeft: `4px solid ${analytics.netProfit >= 0 ? 'var(--success)' : 'var(--danger)'}`, padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Activity size={14} style={{ color: analytics.netProfit >= 0 ? 'var(--success)' : 'var(--danger)' }} /> Net Profit
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0', color: analytics.netProfit >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+              ₹{analytics.netProfit.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </p>
+          </div>
+
+          {/* Card 6: Pending Payments */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--danger)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <AlertCircle size={14} className="text-danger" /> Receivables
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0', color: 'var(--danger)' }}>
+              ₹{analytics.pendingPayments.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </p>
+          </div>
+
+          {/* Card 7: Total Customers */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid #8b5cf6', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Users size={14} style={{ color: '#8b5cf6' }} /> Customers
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              {analytics.totalCustomers}
+            </p>
+          </div>
+
+          {/* Card 8: Active Employees */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid #ec4899', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Briefcase size={14} style={{ color: '#ec4899' }} /> Active Staff
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              {analytics.activeEmployees}
+            </p>
+          </div>
+
+          {/* Card 9: Bills This Month */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--info)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Receipt size={14} className="text-info" /> Bills This Mo.
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              {analytics.billsThisMonth}
+            </p>
+          </div>
+
+          {/* Card 10: Invoices This Month */}
+          <div className="dashboard-card" style={{ borderLeft: '4px solid var(--primary-hover)', padding: '12px' }}>
+            <span className="text-muted" style={{ fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <FileText size={14} style={{ color: 'var(--primary-hover)' }} /> Invoices This Mo.
+            </span>
+            <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
+              {analytics.invoicesThisMonth}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Advanced Tabbed Charts Switcher (10 Charts) */}
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <BarChart3 size={18} /> Business Insights & Charts
+        </h3>
+
+        <div className="tabs-container" style={{ margin: '8px 0 16px 0' }}>
+          <button className={`tab-btn ${activeTab === 'trends' ? 'active' : ''}`} onClick={() => setActiveTab('trends')}>Financial Trends</button>
+          <button className={`tab-btn ${activeTab === 'breakdowns' ? 'active' : ''}`} onClick={() => setActiveTab('breakdowns')}>Expense & Payments</button>
+          <button className={`tab-btn ${activeTab === 'services' ? 'active' : ''}`} onClick={() => setActiveTab('services')}>Services Popularity</button>
+          <button className={`tab-btn ${activeTab === 'customers' ? 'active' : ''}`} onClick={() => setActiveTab('customers')}>Customer Growth</button>
         </div>
 
-        <div className="dashboard-card" style={{ borderLeft: '4px solid var(--primary)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)' }}>
-            <Activity size={20} />
-            <h3 style={{ margin: 0, color: 'var(--text-light)' }}>Bills This Mo.</h3>
-          </div>
-          <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text)', margin: '8px 0' }}>
-            {analytics.billsThisMonth}
-          </p>
-        </div>
-        
-        <div className="dashboard-card" style={{ borderLeft: '4px solid #856404' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#856404' }}>
-            <TrendingUp size={20} />
-            <h3 style={{ margin: 0, color: 'var(--text-light)' }}>Total Rev</h3>
-          </div>
-          <p style={{ fontSize: '1.5rem', fontWeight: 'bold', color: 'var(--text)', margin: '8px 0' }}>
-            ₹{analytics.totalRevenue.toFixed(0)}
-          </p>
-        </div>
-      </div>
-
-      {/* Quick Navigation Links */}
-      <div className="card" style={{ padding: '16px', display: 'flex', flexWrap: 'wrap', gap: '10px', justifyContent: 'space-between' }}>
-        <Link to="/bills" className="btn btn-secondary" style={{ flex: '1 1 120px' }}><Receipt size={16}/> Bills</Link>
-        <Link to="/invoices" className="btn btn-secondary" style={{ flex: '1 1 120px' }}><FileText size={16}/> Invoices</Link>
-        <Link to="/customers" className="btn btn-secondary" style={{ flex: '1 1 120px' }}><Users size={16}/> Customers</Link>
-        <Link to="/services" className="btn btn-secondary" style={{ flex: '1 1 120px' }}><Settings size={16}/> Services</Link>
-      </div>
-
-      {/* Revenue Chart */}
-      <div className="card">
-        <h3 className="card-title">Revenue Trends (6 Months)</h3>
         {loading ? (
-           <div className="loading-pulse" style={{ height: '250px' }}></div>
+          <div className="loading-pulse" style={{ height: '280px' }}></div>
         ) : (
-          <div style={{ height: '280px', width: '100%', marginTop: '16px' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={analytics.revenueData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#666' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#666' }} />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                  formatter={(value) => [`₹${value}`, 'Revenue']}
-                />
-                <Area type="monotone" dataKey="revenue" stroke="var(--primary)" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div style={{ minHeight: '300px' }}>
+            
+            {/* TAB 1: FINANCIAL TRENDS */}
+            {activeTab === 'trends' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }} className="invoice-grid">
+                
+                {/* Chart 1: Revenue vs Expense Comparison */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Monthly Revenue vs Expense (Comparison)</h4>
+                  <div style={{ height: '240px', width: '100%' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={analytics.monthlyTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="revenue" name="Revenue" fill="#003366" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="expenses" name="Expenses" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Chart 2: Net Profit Trend */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Monthly Net Profit Trend</h4>
+                  <div style={{ height: '240px', width: '100%' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analytics.monthlyTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Area type="monotone" dataKey="profit" name="Net Profit" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorProfit)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Chart 3: Revenue Trend (Line) */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Revenue Trend (6 Months Area)</h4>
+                  <div style={{ height: '240px', width: '100%' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analytics.monthlyTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#003366" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="#003366" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#003366" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRevenue)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Chart 4: Expense Trend (Line) */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Expense Trend (6 Months Line)</h4>
+                  <div style={{ height: '240px', width: '100%' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={analytics.monthlyTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Line type="monotone" dataKey="expenses" name="Expenses" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 2: EXPENSE & PAYMENTS BREAKDOWN */}
+            {activeTab === 'breakdowns' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }} className="invoice-grid">
+                
+                {/* Chart 5: Category-Wise Expense Breakdown */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Expense Categories Breakdown (Pie)</h4>
+                  {analytics.expenseBreakdownData.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{ height: '200px', width: '100%' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={analytics.expenseBreakdownData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={50}
+                              outerRadius={75}
+                              paddingAngle={3}
+                              dataKey="value"
+                            >
+                              {analytics.expenseBreakdownData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(value) => `₹${value.toFixed(0)}`} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '8px 14px', fontSize: '0.72rem' }}>
+                        {analytics.expenseBreakdownData.map((entry, idx) => (
+                          <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: COLORS[idx % COLORS.length] }}></span>
+                            <span>{entry.name}: <strong>₹{entry.value.toFixed(0)}</strong></span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', fontSize: '0.85rem', color: 'var(--text-light)' }}>No expenses logged.</div>
+                  )}
+                </div>
+
+                {/* Chart 6: Payment Status Analysis */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Invoice Payment Status Distribution</h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ height: '200px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={analytics.paymentStatusData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={0}
+                            outerRadius={75}
+                            labelLine={false}
+                            label={({ name, percent }) => percent > 0 ? `${name} (${(percent * 100).toFixed(0)}%)` : ''}
+                            dataKey="value"
+                          >
+                            {/* Colors: Paid (Green), Partial (Warning), Unpaid (Danger) */}
+                            <Cell fill="#10b981" />
+                            <Cell fill="#f59e0b" />
+                            <Cell fill="#ef4444" />
+                          </Pie>
+                          <Tooltip formatter={(value) => [`${value} Invoices`, 'Volume']} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 3: SERVICES POPULARITY */}
+            {activeTab === 'services' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }} className="invoice-grid">
+                
+                {/* Chart 7: Top Services by Revenue */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Top 5 Services (By Invoice Revenue)</h4>
+                  {analytics.topServicesData.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{ height: '200px', width: '100%' }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={analytics.topServicesData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={45}
+                              outerRadius={70}
+                              paddingAngle={2}
+                              dataKey="value"
+                            >
+                              {analytics.topServicesData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip formatter={(value) => `₹${value.toFixed(0)}`} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '8px 14px', fontSize: '0.72rem' }}>
+                        {analytics.topServicesData.map((entry, idx) => (
+                          <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: COLORS[idx % COLORS.length] }}></span>
+                            <span>{entry.name}: <strong>₹{entry.value.toFixed(0)}</strong></span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', fontSize: '0.85rem', color: 'var(--text-light)' }}>No invoice items billed yet.</div>
+                  )}
+                </div>
+
+                {/* Chart 8: Service Usage Volume */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Service Billing Volume (Quantity Sold)</h4>
+                  {analytics.serviceUsageData.length > 0 ? (
+                    <div style={{ height: '240px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={analytics.serviceUsageData} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#eee" />
+                          <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
+                          <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} width={80} />
+                          <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} />
+                          <Bar dataKey="value" name="Pieces Cleaned" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', fontSize: '0.85rem', color: 'var(--text-light)' }}>No items billed.</div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 4: CUSTOMER GROWTH */}
+            {activeTab === 'customers' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }} className="invoice-grid">
+                
+                {/* Chart 9: Top Customer Invoiced Revenue */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Top 5 Valued Customers (Invoiced Sales)</h4>
+                  {analytics.topCustomersData.length > 0 ? (
+                    <div style={{ height: '240px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={analytics.topCustomersData} layout="vertical" margin={{ top: 10, right: 20, left: 20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#eee" />
+                          <XAxis type="number" axisLine={false} tickLine={false} />
+                          <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} width={90} />
+                          <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                          <Bar dataKey="value" name="Amount Paid" fill="#10b981" radius={[0, 4, 4, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', fontSize: '0.85rem', color: 'var(--text-light)' }}>No invoice records.</div>
+                  )}
+                </div>
+
+                {/* Chart 10: Cumulative Customer Growth Trend */}
+                <div style={{ minHeight: '260px' }}>
+                  <h4 style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)', marginBottom: '8px', textAlign: 'center' }}>Customer Base Growth Trend</h4>
+                  {analytics.customerGrowthData.length > 0 ? (
+                    <div style={{ height: '240px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={analytics.customerGrowthData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9 }} />
+                          <YAxis axisLine={false} tickLine={false} />
+                          <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} />
+                          <Line type="monotone" dataKey="count" name="Total Customers" stroke="#003366" strokeWidth={2.5} dot={{ r: 4 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', fontSize: '0.85rem', color: 'var(--text-light)' }}>No customer profiles logged.</div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
           </div>
         )}
       </div>
 
-      {/* Recent Bills */}
+      {/* Recent Bills Ledger Section */}
       <div className="card">
         <div className="flex-between mb-2">
           <h3 className="card-title" style={{ border: 'none', margin: 0 }}>Recent Bills</h3>
-          <Link to="/bills" style={{ fontSize: '0.82rem', color: 'var(--primary)' }}>View all →</Link>
+          <Link to="/bills" style={{ fontSize: '0.82rem', color: 'var(--primary)', display: 'flex', alignItems: 'center' }}>
+            View all <ChevronRight size={14} />
+          </Link>
         </div>
 
         {loading ? (
@@ -271,16 +760,16 @@ export default function Dashboard() {
               <tbody>
                 {recentBills.map(bill => (
                   <tr key={bill.id}>
-                    <td style={{ fontSize: '0.78rem', fontFamily: 'monospace' }}>{bill.billNumber || bill.id}</td>
-                    <td>{bill.customerName}</td>
+                    <td style={{ fontSize: '0.78rem', fontFamily: 'monospace', fontWeight: 600 }}>{bill.billNumber || bill.id}</td>
+                    <td style={{ fontWeight: 500 }}>{bill.customerName}</td>
                     <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
                       {bill.date ? format(new Date(bill.date), 'dd MMM yy') : ''}
                     </td>
-                    <td style={{ whiteSpace: 'nowrap', fontWeight: 500 }}>₹{Number(bill.totalAmount).toFixed(2)}</td>
+                    <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>₹{Number(bill.totalAmount).toFixed(2)}</td>
                     <td>
                       {bill.invoiceId
-                        ? <span className="badge badge-invoiced">Invoiced</span>
-                        : <span className="badge badge-pending">Pending</span>
+                        ? <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>Invoiced</span>
+                        : <span className="badge badge-warning" style={{ fontSize: '0.7rem' }}>Pending</span>
                       }
                     </td>
                   </tr>
@@ -290,7 +779,7 @@ export default function Dashboard() {
           </div>
         ) : (
           <div style={{ textAlign: 'center', padding: '24px' }}>
-            <p className="text-muted" style={{ marginBottom: '12px' }}>No bills yet. Create your first bill!</p>
+            <p className="text-muted" style={{ marginBottom: '12px' }}>No bills recorded yet.</p>
             <Link to="/bills/new" className="btn btn-primary">+ New Bill</Link>
           </div>
         )}

@@ -21,6 +21,15 @@ import ServiceList from './pages/ServiceList';
 import InstallPrompt from './components/InstallPrompt';
 import OfflineBanner from './components/OfflineBanner';
 
+// New modules
+import EmployeeList from './pages/EmployeeList';
+import EmployeeForm from './pages/EmployeeForm';
+import SalaryPaymentForm from './pages/SalaryPaymentForm';
+import ExpenseList from './pages/ExpenseList';
+import ExpenseForm from './pages/ExpenseForm';
+import Reports from './pages/Reports';
+import Settings from './pages/Settings';
+
 const PrivateRoute = ({ children }) => {
   const { currentUser } = useAuth();
   return currentUser ? children : <Navigate to="/login" />;
@@ -58,6 +67,25 @@ function AppRoutes() {
 
         {/* Services */}
         <Route path="services" element={<ServiceList />} />
+
+        {/* New modules: Employees */}
+        <Route path="employees"      element={<EmployeeList />} />
+        <Route path="employees/new"  element={<EmployeeForm />} />
+        <Route path="employees/:id"  element={<EmployeeForm />} />
+
+        {/* New modules: Salaries */}
+        <Route path="salaries/new"   element={<SalaryPaymentForm />} />
+
+        {/* New modules: Expenses */}
+        <Route path="expenses"          element={<ExpenseList />} />
+        <Route path="expenses/new"      element={<ExpenseForm />} />
+        <Route path="expenses/:id/edit" element={<ExpenseForm />} />
+
+        {/* New modules: Reports */}
+        <Route path="reports"           element={<Reports />} />
+
+        {/* New modules: Settings */}
+        <Route path="settings"          element={<Settings />} />
 
         {/* Legacy URL redirects — keep old bookmarks working */}
         <Route path="create-invoice"   element={<Navigate to="/bills/new"  replace />} />

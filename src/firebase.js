@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { initializeFirestore, setLogLevel } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "dummy",
@@ -25,4 +26,6 @@ export const db = initializeFirestore(app, {
   useFetchStreams: false, // Prevents hangs in some browser/proxy setups
 });
 
-console.log("Firestore initialized with Long Polling and No Streams.");
+export const storage = getStorage(app);
+
+console.log("Firestore and Storage initialized.");
