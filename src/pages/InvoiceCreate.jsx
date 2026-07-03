@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 /**
  * Aggregate bill items by (serviceId + unitPrice).
@@ -203,6 +204,7 @@ export default function InvoiceCreate() {
         amountPaid:    0,
         balanceAmount: totalAmount,
         paymentStatus: 'unpaid',
+        payments:      [],
       });
 
       // Mark each included bill as invoiced (batch)
@@ -349,7 +351,7 @@ export default function InvoiceCreate() {
                         <td style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>
                           {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
                         </td>
-                        <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>₹{Number(bill.totalAmount).toFixed(2)}</td>
+                        <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{formatCurrency(Number(bill.totalAmount))}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -388,8 +390,8 @@ export default function InvoiceCreate() {
                     <td style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>{i + 1}</td>
                     <td style={{ fontWeight: 500 }}>{item.name}</td>
                     <td style={{ textAlign: 'center' }}>{item.quantity}</td>
-                    <td style={{ textAlign: 'right' }}>₹{Number(item.unitPrice).toFixed(2)}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(item.total).toFixed(2)}</td>
+                    <td style={{ textAlign: 'right' }}>{formatCurrency(Number(item.unitPrice))}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatCurrency(Number(item.total))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -399,7 +401,7 @@ export default function InvoiceCreate() {
           <div className="total-section">
             <div className="total-row grand-total">
               <span>Invoice Total:</span>
-              <span>₹{totalAmount.toFixed(2)}</span>
+              <span>{formatCurrency(totalAmount)}</span>
             </div>
           </div>
 

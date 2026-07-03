@@ -8,6 +8,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function BillCreate() {
   const [customers,          setCustomers]          = useState([]);
@@ -355,7 +356,7 @@ export default function BillCreate() {
                       />
                     </td>
                     <td data-label="Amount" style={{ whiteSpace: 'nowrap', fontWeight: '500', textAlign: 'right', minWidth: '72px' }}>
-                      ₹{item.total.toFixed(2)}
+                      {formatCurrency(item.total)}
                     </td>
                   </tr>
                 ))}
@@ -367,11 +368,11 @@ export default function BillCreate() {
           <div className="total-section sticky-mobile-total">
             <div className="total-row">
               <span>Subtotal:</span>
-              <span>₹{calculateTotal().toFixed(2)}</span>
+              <span>{formatCurrency(calculateTotal())}</span>
             </div>
             <div className="total-row grand-total">
               <span>Total:</span>
-              <span>₹{calculateTotal().toFixed(2)}</span>
+              <span>{formatCurrency(calculateTotal())}</span>
             </div>
           </div>
 

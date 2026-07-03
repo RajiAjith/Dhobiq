@@ -7,6 +7,7 @@ import { Download, Edit, Trash2, Receipt } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 const MONTHS = [
   { value: '', label: 'All Months' },
@@ -31,7 +32,7 @@ export default function BillList() {
 
   const [filters, setFilters] = useState({
     customerId: '',
-    month: '',
+    month: new Date().getMonth().toString(),
     year: new Date().getFullYear().toString(),
     status: '',
   });
@@ -182,7 +183,7 @@ export default function BillList() {
       {!loading && pendingCount > 0 && (
         <div className="summary-bar">
           <span>📋 <strong>{pendingCount}</strong> uninvoiced bill{pendingCount > 1 ? 's' : ''}</span>
-          <span>Total pending: <strong>₹{pendingTotal.toFixed(2)}</strong></span>
+          <span>Total pending: <strong>{formatCurrency(pendingTotal)}</strong></span>
           <Link to="/invoices/new" className="btn btn-primary" style={{ padding: '6px 14px', fontSize: '0.85rem' }}>
             Generate Invoice
           </Link>
@@ -226,7 +227,7 @@ export default function BillList() {
                       {bill.date ? format(new Date(bill.date), 'dd MMM yy') : ''}
                     </td>
                     <td style={{ whiteSpace: 'nowrap', fontWeight: '500' }}>
-                      ₹{Number(bill.totalAmount).toFixed(2)}
+                      {formatCurrency(Number(bill.totalAmount))}
                     </td>
                     <td>{renderStatusBadge(bill)}</td>
                     <td>

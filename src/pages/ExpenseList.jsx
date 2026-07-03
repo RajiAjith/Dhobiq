@@ -6,6 +6,7 @@ import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import { Search, Plus, Edit, Trash2, Calendar, FileText, Download, AlertTriangle, Eye } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function ExpenseList() {
   const [expenses,       setExpenses]       = useState([]);
@@ -212,7 +213,7 @@ export default function ExpenseList() {
       <div className="card" style={{ padding: '14px', backgroundColor: 'var(--primary-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)' }}>TOTAL FILTERED EXPENSES</span>
         <strong style={{ fontSize: '1.4rem', color: 'var(--primary)' }}>
-          ₹{totalFilteredAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {formatCurrency(totalFilteredAmount)}
         </strong>
       </div>
 
@@ -257,7 +258,7 @@ export default function ExpenseList() {
                           {exp.category}
                         </span>
                       </td>
-                      <td style={{ fontWeight: 600 }}>₹{Number(exp.amount || 0).toFixed(2)}</td>
+                      <td style={{ fontWeight: 600 }}>{formatCurrency(Number(exp.amount || 0))}</td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span>{exp.description}</span>
@@ -315,7 +316,7 @@ export default function ExpenseList() {
                       </span>
                     </div>
                     <span style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text)' }}>
-                      ₹{Number(exp.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      {formatCurrency(Number(exp.amount || 0))}
                     </span>
                   </div>
 

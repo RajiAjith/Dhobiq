@@ -6,6 +6,7 @@ import { FALLBACK_SERVICES } from '../utils/constants';
 import { format } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function CustomerForm() {
   const { id } = useParams();
@@ -238,7 +239,7 @@ export default function CustomerForm() {
                 <tr key={svc.id}>
                   <td data-label="Service" style={{ fontWeight: 500 }}>{svc.name}</td>
                   <td data-label="Default" style={{ whiteSpace: 'nowrap', color: 'var(--text-light)' }}>
-                    ₹{svc.defaultPrice}
+                    {formatCurrency(svc.defaultPrice)}
                   </td>
                   <td data-label="Custom (₹)">
                     <input

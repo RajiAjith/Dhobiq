@@ -15,7 +15,8 @@ export default function Settings() {
     tagline: 'Your Clothes Our Care!',
     phone: '+91-9061504910, +91-7902958593',
     address: "Near MacDonald's | Thumpoly P.O, Alappuzha",
-    footerText: 'Freshness Delivered to Your Doorstep'
+    footerText: 'Freshness Delivered to Your Doorstep',
+    analyticsStartDate: '2026-06-01'
   });
 
   const [customCategories, setCustomCategories] = useState([]);
@@ -37,7 +38,15 @@ export default function Settings() {
       // 1. Load general settings
       const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
       if (settingsSnap.exists()) {
-        setBusinessSettings(settingsSnap.data());
+        setBusinessSettings({
+          name: 'Dhobiq Laundry',
+          tagline: 'Your Clothes Our Care!',
+          phone: '+91-9061504910, +91-7902958593',
+          address: "Near MacDonald's | Thumpoly P.O, Alappuzha",
+          footerText: 'Freshness Delivered to Your Doorstep',
+          analyticsStartDate: '2026-06-01',
+          ...settingsSnap.data()
+        });
       }
 
       // 2. Load custom expense categories
@@ -243,6 +252,19 @@ export default function Settings() {
                 onChange={handleSettingChange}
                 className="form-control"
               />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="analytics-start-date">Analytics Start Date</label>
+              <input
+                id="analytics-start-date"
+                type="date"
+                name="analyticsStartDate"
+                value={businessSettings.analyticsStartDate || '2026-06-01'}
+                onChange={handleSettingChange}
+                className="form-control"
+              />
+              <small className="text-muted">Lifetime revenue, expenses, and profit cards will use data from this date onward. Monthly cards still use the selected month.</small>
             </div>
 
             <div style={{ marginTop: '6px' }}>

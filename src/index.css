@@ -777,14 +777,8 @@ select.form-control:hover {
   font-size: 0.72rem;
   color: var(--text-light);
   line-height: 1.4;
-  display: none;
-  /* hide description on very small screens */
-}
-
-@media (min-width: 400px) {
-  .dashboard-card p {
-    display: block;
-  }
+  display: block;
+  /* always show values on all screen sizes */
 }
 
 .dashboard-card .btn {

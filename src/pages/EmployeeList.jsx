@@ -6,6 +6,7 @@ import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import { Search, Plus, Edit, Trash2, Phone, Calendar, Briefcase, IndianRupee, History, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function EmployeeList() {
   const location = useLocation();
@@ -129,7 +130,7 @@ export default function EmployeeList() {
 
   const handleDeleteSalary = async (paymentId, empName, month, amount, expenseId) => {
     const formattedMonth = formatSalaryMonth(month);
-    if (!window.confirm(`Are you sure you want to delete the salary payment of ₹${amount} for ${empName} (${formattedMonth})?\n\nThis will also delete the corresponding expense calculation record.`)) return;
+    if (!window.confirm(`Are you sure you want to delete the salary payment of ${formatCurrency(amount)} for ${empName} (${formattedMonth})?\n\nThis will also delete the corresponding expense calculation record.`)) return;
 
     try {
       await deleteDoc(doc(db, 'salary_payments', paymentId));
@@ -262,7 +263,7 @@ export default function EmployeeList() {
                         <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{emp.employeeId || emp.id}</td>
                         <td style={{ fontWeight: 500 }}>{emp.name}</td>
                         <td>{emp.designation || 'Staff'}</td>
-                        <td>₹{Number(emp.monthlySalary || 0).toLocaleString('en-IN')}</td>
+                        <td>{formatCurrency(Number(emp.monthlySalary || 0))}</td>
                         <td>{emp.joiningDate}</td>
                         <td>
                           <span className={`badge ${emp.status === 'active' ? 'badge-active' : 'badge-inactive'}`}>
@@ -307,7 +308,7 @@ export default function EmployeeList() {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-light)' }}>
                         <IndianRupee size={14} />
-                        <strong>₹{Number(emp.monthlySalary || 0).toLocaleString('en-IN')}</strong>
+                        <strong>{formatCurrency(Number(emp.monthlySalary || 0))}</strong>
                       </div>
                       {emp.phone && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--text-light)', gridColumn: 'span 2' }}>
@@ -392,7 +393,7 @@ export default function EmployeeList() {
                       <tr key={sal.id}>
                         <td style={{ fontWeight: 600 }}>{sal.employeeName}</td>
                         <td style={{ fontWeight: 500 }}>{formatSalaryMonth(sal.salaryMonth)}</td>
-                        <td>₹{Number(sal.amount || 0).toLocaleString('en-IN')}</td>
+                        <td>{formatCurrency(Number(sal.amount || 0))}</td>
                         <td>{sal.paymentDate ? format(new Date(sal.paymentDate), 'dd MMM yyyy') : ''}</td>
                         <td style={{ color: 'var(--text-light)', fontSize: '0.8rem', maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sal.notes}>
                           {sal.notes || '—'}
@@ -422,7 +423,7 @@ export default function EmployeeList() {
                         </p>
                       </div>
                       <span style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--primary)' }}>
-                        ₹{Number(sal.amount || 0).toLocaleString('en-IN')}
+                        {formatCurrency(Number(sal.amount || 0))}
                       </span>
                     </div>
 

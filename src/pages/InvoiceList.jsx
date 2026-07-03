@@ -7,6 +7,9 @@ import { Download, Eye, Trash2, CreditCard } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import InvoicePaymentModal from '../components/InvoicePaymentModal';
+import { getInvoicePaymentEntries, getInvoicePaymentSummary, persistInvoicePayment } from '../utils/paymentUtils';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 const MONTHS = [
   { value: '', label: 'All Months' },
@@ -30,12 +33,16 @@ export default function InvoiceList() {
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentInvoice, setPaymentInvoice] = useState(null);
-  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentModalMode, setPaymentModalMode] = useState('add');
+  const [editingPaymentIndex, setEditingPaymentIndex] = useState(null);
+  const [activePayment, setActivePayment] = useState(null);
 
+  // Default month to current month
   const [filters, setFilters] = useState({
     customerId: '',
-    month: '',
+    month: new Date().getMonth().toString(),
     year: new Date().getFullYear().toString(),
+    status: '',
   });
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
@@ -50,9 +57,20 @@ export default function InvoiceList() {
       ]);
       const invData = [];
       invSnap.forEach(d => invData.push({ id: d.id, ...d.data() }));
-      invData.sort((a, b) => b.invoiceDate - a.invoiceDate);
-      setInvoices(invData);
-      setFilteredInvoices(invData);
+      const normalizedInvoices = invData
+        .map(inv => {
+          const summary = getInvoicePaymentSummary(inv);
+          return {
+            ...inv,
+            payments: getInvoicePaymentEntries(inv),
+            amountPaid: summary.amountPaid,
+            balanceAmount: summary.balanceAmount,
+            paymentStatus: summary.paymentStatus
+          };
+        })
+        .sort((a, b) => b.invoiceDate - a.invoiceDate);
+      setInvoices(normalizedInvoices);
+      setFilteredInvoices(normalizedInvoices);
 
       const custData = [];
       custSnap.forEach(d => custData.push({ id: d.id, ...d.data() }));
@@ -82,6 +100,7 @@ export default function InvoiceList() {
       const d = new Date(inv.invoiceDate);
       return d.getMonth().toString() === filters.month;
     });
+    if (filters.status) result = result.filter(inv => (inv.paymentStatus || inv.status || 'unpaid') === filters.status);
     setFilteredInvoices(result);
   }, [filters, invoices]);
 
@@ -106,57 +125,46 @@ export default function InvoiceList() {
   // ── Payment Modal ──────────────────────────────────────────────────────────
   const handleOpenPayment = (inv) => {
     setPaymentInvoice(inv);
-    setPaymentAmount('');
+    setPaymentModalMode('add');
+    setEditingPaymentIndex(null);
+    setActivePayment(null);
     setPaymentModalOpen(true);
   };
 
-  const handleSavePayment = async () => {
-    if (!paymentInvoice || !paymentAmount) return;
-    const amount = Number(paymentAmount);
-    if (isNaN(amount) || amount <= 0) {
-      alert('Please enter a valid amount.');
-      return;
-    }
-
-    const currentPaid = paymentInvoice.amountPaid || 0;
-    const newPaid = currentPaid + amount;
-    const total = paymentInvoice.totalAmount;
-
-    if (newPaid > total) {
-      alert('Payment amount cannot exceed total balance.');
-      return;
-    }
-
-    const balanceAmount = total - newPaid;
-    let paymentStatus = 'unpaid';
-    if (newPaid > 0) {
-      paymentStatus = newPaid >= total ? 'paid' : 'partial';
-    }
+  const handleSavePayment = async ({ paymentForm }) => {
+    if (!paymentInvoice) return;
 
     try {
-      await writeBatch(db).commit(); // Just for dummy batch, but we can use doc update
-      await getDoc(doc(db, 'invoices', paymentInvoice.id)); // Dummy fetch
+      const updatedSummary = await persistInvoicePayment({
+        dbInstance: db,
+        invoice: paymentInvoice,
+        paymentForm,
+        mode: paymentModalMode,
+        editingPaymentIndex,
+        invoiceId: paymentInvoice.id
+      });
 
-      const invRef = doc(db, 'invoices', paymentInvoice.id);
-      await writeBatch(db).update(invRef, {
-        amountPaid: newPaid,
-        balanceAmount,
-        paymentStatus
-      }).commit();
-
-      setInvoices(invoices.map(inv =>
+      setInvoices(prev => prev.map(inv =>
         inv.id === paymentInvoice.id
-          ? { ...inv, amountPaid: newPaid, balanceAmount, paymentStatus }
+          ? {
+              ...inv,
+              payments: updatedSummary.payments,
+              amountPaid: updatedSummary.amountPaid,
+              balanceAmount: updatedSummary.balanceAmount,
+              paymentStatus: updatedSummary.paymentStatus
+            }
           : inv
       ));
 
       setPaymentModalOpen(false);
       setPaymentInvoice(null);
-      setPaymentAmount('');
+      setPaymentModalMode('add');
+      setEditingPaymentIndex(null);
+      setActivePayment(null);
     } catch (error) {
       console.error('Error saving payment:', error);
       reportError(error);
-      alert('Failed to save payment.');
+      throw error;
     }
   };
 
@@ -176,7 +184,6 @@ export default function InvoiceList() {
   const handleDelete = async (invoiceId) => {
     if (!window.confirm('Delete this invoice? The associated bills will become uninvoiced again.')) return;
     try {
-      // Un-mark bills as invoiced first
       const invSnap = await getDoc(doc(db, 'invoices', invoiceId));
       if (invSnap.exists()) {
         const { billIds = [] } = invSnap.data();
@@ -221,6 +228,15 @@ export default function InvoiceList() {
             {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </div>
+        <div className="filter-item">
+          <label>Status</label>
+          <select name="status" value={filters.status} onChange={handleFilterChange} className="form-control">
+            <option value="">All Status</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="partial">Partial</option>
+            <option value="paid">Paid</option>
+          </select>
+        </div>
       </div>
 
       {/* Invoice List */}
@@ -253,50 +269,63 @@ export default function InvoiceList() {
                 </tr>
               </thead>
               <tbody>
-                {filteredInvoices.map(inv => (
-                  <tr key={inv.id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
-                      {inv.invoiceNumber || inv.id}
-                    </td>
-                    <td>{inv.customerName}</td>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
-                      {inv.invoiceDate ? format(new Date(inv.invoiceDate), 'dd MMM yy') : ''}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span className="badge badge-pending" style={{ background: 'var(--primary-light)', color: 'var(--primary)' }}>
-                        {(inv.billIds || []).length}
-                      </span>
-                    </td>
-                    <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      ₹{Number(inv.totalAmount).toFixed(2)}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap', color: 'var(--success)' }}>
-                      ₹{Number(inv.amountPaid || 0).toFixed(2)}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap', color: 'var(--danger)' }}>
-                      ₹{Number(inv.balanceAmount ?? inv.totalAmount).toFixed(2)}
-                    </td>
-                    <td>
-                      {renderStatusBadge(inv.paymentStatus || inv.status)}
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button onClick={() => handleOpenPayment(inv)} className="btn-icon" title="Add Payment" style={{ color: 'var(--primary)' }}>
-                          <CreditCard size={18} />
-                        </button>
-                        <Link to={`/invoices/${inv.id}`} className="btn-icon" title="View Invoice">
-                          <Eye size={18} />
-                        </Link>
-                        <button onClick={() => handleDownloadPDF(inv)} className="btn-icon" title="Download PDF">
-                          <Download size={18} />
-                        </button>
-                        <button onClick={() => handleDelete(inv.id)} className="btn-icon" title="Delete Invoice" style={{ color: '#dc3545' }}>
-                          <Trash2 size={18} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filteredInvoices.map(inv => {
+                  const isPaid = (inv.paymentStatus || inv.status) === 'paid';
+                  return (
+                    <tr key={inv.id}>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
+                        {inv.invoiceNumber || inv.id}
+                      </td>
+                      <td>{inv.customerName}</td>
+                      <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
+                        {inv.invoiceDate ? format(new Date(inv.invoiceDate), 'dd MMM yy') : ''}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span className="badge badge-pending" style={{ background: 'var(--primary-light)', color: 'var(--primary)' }}>
+                          {(inv.billIds || []).length}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>
+                        {formatCurrency(Number(inv.totalAmount))}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--success)' }}>
+                        {formatCurrency(Number(inv.amountPaid || 0))}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap', color: 'var(--danger)' }}>
+                        {formatCurrency(Number(inv.balanceAmount ?? inv.totalAmount))}
+                      </td>
+                      <td>
+                        {renderStatusBadge(inv.paymentStatus || inv.status)}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                          <button
+                            onClick={() => !isPaid && handleOpenPayment(inv)}
+                            className="btn-icon"
+                            title={isPaid ? 'Invoice fully paid' : 'Add Payment'}
+                            disabled={isPaid}
+                            style={{
+                              color: isPaid ? 'var(--text-light)' : 'var(--primary)',
+                              opacity: isPaid ? 0.4 : 1,
+                              cursor: isPaid ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            <CreditCard size={18} />
+                          </button>
+                          <Link to={`/invoices/${inv.id}`} className="btn-icon" title="View Invoice">
+                            <Eye size={18} />
+                          </Link>
+                          <button onClick={() => handleDownloadPDF(inv)} className="btn-icon" title="Download PDF">
+                            <Download size={18} />
+                          </button>
+                          <button onClick={() => handleDelete(inv.id)} className="btn-icon" title="Delete Invoice" style={{ color: '#dc3545' }}>
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -308,36 +337,21 @@ export default function InvoiceList() {
         )}
       </div>
 
-      {/* Payment Modal */}
-      {paymentModalOpen && paymentInvoice && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '400px', margin: 0 }}>
-            <h3 className="card-title">Add Payment</h3>
-            <p><strong>Invoice:</strong> {paymentInvoice.invoiceNumber || paymentInvoice.id}</p>
-            <p><strong>Customer:</strong> {paymentInvoice.customerName}</p>
-            <p><strong>Balance:</strong> ₹{Number(paymentInvoice.balanceAmount ?? paymentInvoice.totalAmount).toFixed(2)}</p>
-
-            <div className="form-group" style={{ marginTop: '15px' }}>
-              <label>Payment Amount (₹)</label>
-              <input
-                type="number"
-                min="1"
-                max={paymentInvoice.balanceAmount ?? paymentInvoice.totalAmount}
-                step="0.01"
-                className="form-control"
-                value={paymentAmount}
-                onChange={e => setPaymentAmount(e.target.value)}
-                autoFocus
-              />
-            </div>
-
-            <div className="action-row" style={{ marginTop: '20px' }}>
-              <button onClick={handleSavePayment} className="btn btn-primary" style={{ width: '100%' }}>Save Payment</button>
-              <button onClick={() => setPaymentModalOpen(false)} className="btn btn-secondary" style={{ width: '100%' }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <InvoicePaymentModal
+        isOpen={paymentModalOpen && !!paymentInvoice}
+        invoice={paymentInvoice}
+        payment={activePayment}
+        paymentIndex={editingPaymentIndex}
+        mode={paymentModalMode}
+        onClose={() => {
+          setPaymentModalOpen(false);
+          setPaymentInvoice(null);
+          setPaymentModalMode('add');
+          setEditingPaymentIndex(null);
+          setActivePayment(null);
+        }}
+        onSave={handleSavePayment}
+      />
     </div>
   );
 }

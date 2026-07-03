@@ -2,11 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs, query, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
-import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { FileText, Calendar, Search, Download, RefreshCw, BarChart, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
 import OfflineScreen from '../components/OfflineScreen';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { buildReportSummary, getExpensesTotal, getInvoiceRevenueForPeriod, getInvoiceRevenueTotal, getReportDateRange } from '../utils/reportUtils';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function Reports() {
   const [reportType, setReportType] = useState('revenue');
@@ -80,24 +82,17 @@ export default function Reports() {
     setIsOfflineError(false);
 
     try {
-      const start = new Date(fromDate);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(toDate);
-      end.setHours(23, 59, 59, 999);
+      const { start, end } = getReportDateRange(fromDate, toDate);
 
       // Fetch required collections based on type
       let invoices = [];
       let expenses = [];
       let salaries = [];
 
-      if (reportType === 'revenue' || reportType === 'customer' || reportType === 'service' || reportType === 'pnl') {
+      if (reportType === 'revenue' || reportType === 'customer' || reportType === 'service' || reportType === 'pnl' || reportType === 'expense' || reportType === 'category') {
         const snap = await getDocs(collection(db, 'invoices'));
         snap.forEach(d => {
-          const inv = d.data();
-          const invDate = new Date(inv.invoiceDate || Date.now());
-          if (isWithinInterval(invDate, { start, end })) {
-            invoices.push({ id: d.id, ...inv });
-          }
+          invoices.push({ id: d.id, ...d.data() });
         });
       }
 
@@ -105,10 +100,7 @@ export default function Reports() {
         const snap = await getDocs(collection(db, 'expenses'));
         snap.forEach(d => {
           const exp = d.data();
-          const expDate = new Date(exp.date || Date.now());
-          if (isWithinInterval(expDate, { start, end })) {
-            expenses.push({ id: d.id, ...exp });
-          }
+          expenses.push({ id: d.id, ...exp });
         });
       }
 
@@ -116,72 +108,85 @@ export default function Reports() {
         const snap = await getDocs(collection(db, 'salary_payments'));
         snap.forEach(d => {
           const sal = d.data();
-          const pDate = new Date(sal.paymentDate || Date.now());
-          if (isWithinInterval(pDate, { start, end })) {
-            salaries.push({ id: d.id, ...sal });
-          }
+          salaries.push({ id: d.id, ...sal });
         });
       }
 
       // --- FORMAT AND FILTER SUB-REPORTS ---
       let resultData = [];
-      let totalRev = 0;
-      let totalExp = 0;
+      let filteredInvoices = invoices.filter((inv) => selectedCustomer === 'all' || inv.customerId === selectedCustomer);
+      let filteredExpenses = expenses.filter((exp) => {
+        const expDate = new Date(exp.date || Date.now());
+        return expDate >= start && expDate <= end;
+      });
+      let filteredSalaries = salaries.filter((sal) => {
+        const payDate = new Date(sal.paymentDate || Date.now());
+        return payDate >= start && payDate <= end;
+      });
+
+      if (reportType === 'expense') {
+        filteredExpenses = filteredExpenses.filter((exp) => selectedCategory === 'all' || exp.category === selectedCategory);
+      }
+
+      if (reportType === 'salary' && selectedEmployee !== 'all') {
+        filteredSalaries = filteredSalaries.filter((sal) => sal.employeeId === selectedEmployee);
+      }
+
+      const revenueFromInvoices = getInvoiceRevenueTotal(filteredInvoices, start, end);
+      const expensesFromFilteredData = getExpensesTotal(filteredExpenses, start, end);
 
       if (reportType === 'revenue') {
-        // Filter customer
-        if (selectedCustomer !== 'all') {
-          invoices = invoices.filter(inv => inv.customerId === selectedCustomer);
-        }
-        resultData = invoices.map(inv => {
-          const paid = Number(inv.amountPaid) || 0;
-          totalRev += paid;
-          return {
-            col1: inv.invoiceNumber || inv.id,
-            col2: inv.customerName,
-            col3: inv.invoiceDate ? format(new Date(inv.invoiceDate), 'dd MMM yyyy') : '',
-            col4: `₹${Number(inv.totalAmount).toFixed(2)}`,
-            col5: `₹${paid.toFixed(2)}`,
-            col6: inv.paymentStatus?.toUpperCase() || 'UNPAID'
-          };
-        });
-        setSummary({ revenue: totalRev, expenses: 0, profit: totalRev, count: resultData.length });
+        resultData = filteredInvoices
+          .map((inv) => {
+            const paid = getInvoiceRevenueForPeriod(inv, start, end);
+            if (paid <= 0) return null;
+
+            return {
+              col1: inv.invoiceNumber || inv.id,
+              col2: inv.customerName,
+              col3: inv.invoiceDate ? format(new Date(inv.invoiceDate), 'dd MMM yyyy') : '',
+              col4: formatCurrency(Number(inv.totalAmount)),
+              col5: formatCurrency(paid),
+              col6: inv.paymentStatus?.toUpperCase() || 'UNPAID'
+            };
+          })
+          .filter(Boolean);
+
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: expensesFromFilteredData, count: resultData.length }));
       }
 
       else if (reportType === 'expense') {
-        // Filter category & vendor
-        if (selectedCategory !== 'all') {
-          expenses = expenses.filter(exp => exp.category === selectedCategory);
-        }
-        resultData = expenses.map(exp => {
+        resultData = filteredExpenses.map((exp) => {
           const amt = Number(exp.amount) || 0;
-          totalExp += amt;
           return {
             col1: exp.date ? format(new Date(exp.date), 'dd MMM yyyy') : '',
             col2: exp.category,
             col3: exp.description,
             col4: exp.vendor || '—',
             col5: exp.paymentMethod || 'Cash',
-            col6: `₹${amt.toFixed(2)}`
+            col6: formatCurrency(amt)
           };
         });
-        setSummary({ revenue: 0, expenses: totalExp, profit: -totalExp, count: resultData.length });
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: expensesFromFilteredData, count: resultData.length }));
       }
 
       else if (reportType === 'pnl') {
-        // Calculate dynamic profit and loss
-        const rev = invoices.reduce((acc, c) => acc + (Number(c.amountPaid) || 0), 0);
-        const exp = expenses.reduce((acc, c) => acc + (Number(c.amount) || 0), 0);
-        
-        // Group by month for tabular drill down
         const pnlMonthly = {};
-        invoices.forEach(inv => {
-          const mKey = format(new Date(inv.invoiceDate), 'MMMM yyyy');
-          if (!pnlMonthly[mKey]) pnlMonthly[mKey] = { revenue: 0, expenses: 0 };
-          pnlMonthly[mKey].revenue += (Number(inv.amountPaid) || 0);
+        filteredInvoices.forEach((inv) => {
+          const payments = getInvoicePaymentEntries(inv).filter((payment) => {
+            const paymentDate = new Date(payment.paymentDate || Date.now());
+            return paymentDate >= start && paymentDate <= end;
+          });
+
+          payments.forEach((payment) => {
+            const paymentDate = new Date(payment.paymentDate || Date.now());
+            const mKey = format(paymentDate, 'MMMM yyyy');
+            if (!pnlMonthly[mKey]) pnlMonthly[mKey] = { revenue: 0, expenses: 0 };
+            pnlMonthly[mKey].revenue += Number(payment.amount || 0);
+          });
         });
 
-        expenses.forEach(ex => {
+        filteredExpenses.forEach((ex) => {
           const mKey = format(new Date(ex.date), 'MMMM yyyy');
           if (!pnlMonthly[mKey]) pnlMonthly[mKey] = { revenue: 0, expenses: 0 };
           pnlMonthly[mKey].expenses += (Number(ex.amount) || 0);
@@ -189,118 +194,113 @@ export default function Reports() {
 
         resultData = Object.entries(pnlMonthly).map(([month, val]) => ({
           col1: month,
-          col2: `₹${val.revenue.toFixed(2)}`,
-          col3: `₹${val.expenses.toFixed(2)}`,
-          col4: `₹ ${(val.revenue - val.expenses).toFixed(2)}`,
+          col2: formatCurrency(val.revenue),
+          col3: formatCurrency(val.expenses),
+          col4: formatCurrency((val.revenue - val.expenses)),
           col5: val.revenue >= val.expenses ? 'NET SURPLUS' : 'NET DEFICIT',
           col6: ''
         }));
 
-        setSummary({ revenue: rev, expenses: exp, profit: rev - exp, count: resultData.length });
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: expensesFromFilteredData, count: resultData.length }));
       }
 
       else if (reportType === 'salary') {
-        if (selectedEmployee !== 'all') {
-          salaries = salaries.filter(sal => sal.employeeId === selectedEmployee);
-        }
-        resultData = salaries.map(sal => {
+        resultData = filteredSalaries.map((sal) => {
           const amt = Number(sal.amount) || 0;
-          totalExp += amt;
-          
-          // Format month string YYYY-MM to MMMM YYYY
+
           let formattedMonth = sal.salaryMonth;
           try {
             const [y, m] = sal.salaryMonth.split('-');
             const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
             formattedMonth = format(d, 'MMMM yyyy');
-          } catch(e){}
+          } catch (e) {}
 
           return {
             col1: sal.employeeName,
             col2: formattedMonth,
             col3: sal.paymentDate ? format(new Date(sal.paymentDate), 'dd MMM yyyy') : '',
             col4: sal.notes || '—',
-            col5: `₹${amt.toFixed(2)}`,
+            col5: formatCurrency(amt),
             col6: ''
           };
         });
-        setSummary({ revenue: 0, expenses: totalExp, profit: -totalExp, count: resultData.length });
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: filteredSalaries.reduce((acc, sal) => acc + (Number(sal.amount) || 0), 0), count: resultData.length }));
       }
 
       else if (reportType === 'category') {
         const catMap = {};
-        expenses.forEach(ex => {
+        filteredExpenses.forEach((ex) => {
           const c = ex.category || 'Miscellaneous';
           catMap[c] = (catMap[c] || 0) + (Number(ex.amount) || 0);
         });
 
         resultData = Object.entries(catMap)
-          .map(([category, amt]) => {
-            totalExp += amt;
-            return {
-              col1: category,
-              col2: `₹${amt.toFixed(2)}`,
-              col3: `${((amt / (expenses.reduce((a,cr) => a + Number(cr.amount), 0) || 1)) * 100).toFixed(1)}%`,
-              col4: '', col5: '', col6: ''
-            };
-          })
-          .sort((a,b) => b.col1.localeCompare(a.col1));
+          .map(([category, amt]) => ({
+            col1: category,
+            col2: formatCurrency(amt),
+            col3: `${((amt / (filteredExpenses.reduce((a, cr) => a + Number(cr.amount), 0) || 1)) * 100).toFixed(1)}%`,
+            col4: '', col5: '', col6: ''
+          }))
+          .sort((a, b) => b.col1.localeCompare(a.col1));
 
-        setSummary({ revenue: 0, expenses: totalExp, profit: -totalExp, count: resultData.length });
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: expensesFromFilteredData, count: resultData.length }));
       }
 
       else if (reportType === 'customer') {
         const custMap = {};
-        invoices.forEach(inv => {
+        filteredInvoices.forEach((inv) => {
+          const paymentValue = getInvoiceRevenueForPeriod(inv, start, end);
+          if (paymentValue <= 0) return;
+
           const name = inv.customerName || 'Unknown Customer';
           if (!custMap[name]) custMap[name] = { sales: 0, payments: 0, pending: 0 };
           custMap[name].sales += (Number(inv.totalAmount) || 0);
-          custMap[name].payments += (Number(inv.amountPaid) || 0);
-          custMap[name].pending += (Number(inv.balanceAmount) || 0);
+          custMap[name].payments += paymentValue;
+          custMap[name].pending += Math.max(0, (Number(inv.totalAmount) || 0) - paymentValue);
         });
 
         resultData = Object.entries(custMap)
-          .map(([name, data]) => {
-            totalRev += data.payments;
-            return {
-              col1: name,
-              col2: `₹${data.sales.toFixed(2)}`,
-              col3: `₹${data.payments.toFixed(2)}`,
-              col4: `₹${data.pending.toFixed(2)}`,
-              col5: '', col6: ''
-            };
-          })
-          .sort((a,b) => b.col1.localeCompare(a.col1));
+          .map(([name, data]) => ({
+            col1: name,
+            col2: formatCurrency(data.sales),
+            col3: formatCurrency(data.payments),
+            col4: formatCurrency(data.pending),
+            col5: '', col6: ''
+          }))
+          .sort((a, b) => b.col1.localeCompare(a.col1));
 
-        setSummary({ revenue: totalRev, expenses: 0, profit: totalRev, count: resultData.length });
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: expensesFromFilteredData, count: resultData.length }));
       }
 
       else if (reportType === 'service') {
         const svcMap = {};
-        invoices.forEach(inv => {
-          if (inv.items) {
-            inv.items.forEach(item => {
-              const sname = item.name || 'Miscellaneous';
-              if (!svcMap[sname]) svcMap[sname] = { qty: 0, revenue: 0 };
-              svcMap[sname].qty += (Number(item.quantity) || 0);
-              svcMap[sname].revenue += (Number(item.total) || 0);
-            });
-          }
+        filteredInvoices.forEach((inv) => {
+          const paymentValue = getInvoiceRevenueForPeriod(inv, start, end);
+          if (paymentValue <= 0 || !inv.items) return;
+
+          const invoiceTotal = Number(inv.totalAmount) || 0;
+          const paymentShare = invoiceTotal > 0 ? paymentValue / invoiceTotal : 0;
+
+          inv.items.forEach((item) => {
+            const sname = item.name || 'Miscellaneous';
+            if (!svcMap[sname]) svcMap[sname] = { qty: 0, revenue: 0 };
+            const itemQty = Number(item.quantity) || 0;
+            const itemRevenue = (Number(item.total) || 0) * paymentShare;
+            svcMap[sname].qty += itemQty;
+            svcMap[sname].revenue += itemRevenue;
+          });
         });
 
         resultData = Object.entries(svcMap)
-          .map(([sname, val]) => {
-            totalRev += val.revenue;
-            return {
-              col1: sname,
-              col2: `${val.qty} Units`,
-              col3: `₹${val.revenue.toFixed(2)}`,
-              col4: '', col5: '', col6: ''
-            };
-          })
-          .sort((a,b) => b.col1.localeCompare(a.col1));
+          .map(([sname, val]) => ({
+            col1: sname,
+            col2: `${val.qty} Units`,
+            col3: formatCurrency(val.revenue),
+            col4: '', col5: '', col6: ''
+          }))
+          .sort((a, b) => b.col1.localeCompare(a.col1));
 
-        setSummary({ revenue: totalRev, expenses: 0, profit: totalRev, count: resultData.length });
+        setSummary(buildReportSummary({ revenue: revenueFromInvoices, expenses: expensesFromFilteredData, count: resultData.length }));
       }
 
       setReportData(resultData);
@@ -374,11 +374,11 @@ export default function Reports() {
     docPdf.setFontSize(11);
     docPdf.setFont('Helvetica', 'bold');
     docPdf.setTextColor(16, 185, 129); // green
-    docPdf.text(`₹${summary.revenue.toFixed(2)}`, 20, 67);
+    docPdf.text(formatCurrency(summary.revenue), 20, 67);
     docPdf.setTextColor(239, 68, 68); // red
-    docPdf.text(`₹${summary.expenses.toFixed(2)}`, 80, 67);
+    docPdf.text(formatCurrency(summary.expenses), 80, 67);
     docPdf.setTextColor(summary.profit >= 0 ? 16 : 239, summary.profit >= 0 ? 185 : 68, summary.profit >= 0 ? 129 : 68);
-    docPdf.text(`₹${summary.profit.toFixed(2)}`, 140, 67);
+    docPdf.text(formatCurrency(summary.profit), 140, 67);
 
     // 5. Table setup
     let headers = [];
@@ -558,7 +558,7 @@ export default function Reports() {
             <TrendingUp size={14} className="text-success" /> Total Revenue
           </span>
           <strong style={{ fontSize: '1.4rem', color: 'var(--text)', marginTop: '4px' }}>
-            ₹{summary.revenue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            {formatCurrency(summary.revenue)}
           </strong>
         </div>
 
@@ -568,7 +568,7 @@ export default function Reports() {
             <TrendingDown size={14} className="text-danger" /> Total Expenses
           </span>
           <strong style={{ fontSize: '1.4rem', color: 'var(--text)', marginTop: '4px' }}>
-            ₹{summary.expenses.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            {formatCurrency(summary.expenses)}
           </strong>
         </div>
 
@@ -578,7 +578,7 @@ export default function Reports() {
             <DollarSign size={14} style={{ color: summary.profit >= 0 ? 'var(--success)' : 'var(--danger)' }} /> Net Balance Surplus
           </span>
           <strong style={{ fontSize: '1.4rem', color: summary.profit >= 0 ? 'var(--success)' : 'var(--danger)', marginTop: '4px' }}>
-            ₹{summary.profit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            {formatCurrency(summary.profit)}
           </strong>
         </div>
       </div>

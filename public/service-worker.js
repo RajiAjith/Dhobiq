@@ -59,7 +59,9 @@ self.addEventListener('fetch', (event) => {
     url.hostname.includes('identitytoolkit.googleapis.com') ||
     url.hostname.includes('securetoken.googleapis.com') ||
     url.pathname.startsWith('/__/') ||
-    url.pathname === '/ping'
+    url.pathname === '/ping' ||
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1'
   ) {
     return; // Let the browser handle these directly
   }

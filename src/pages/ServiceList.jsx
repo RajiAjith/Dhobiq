@@ -8,6 +8,7 @@ import { sortServices } from '../utils/serviceHelpers';
 import { Edit, Trash2, Plus, Check, X, Download, ArrowUp, ArrowDown } from 'lucide-react';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function ServiceList() {
   const [services,       setServices]       = useState([]);
@@ -330,7 +331,7 @@ export default function ServiceList() {
                       ) : (
                         <>
                           <td data-label="Service Name" style={{ fontWeight: 500 }}>{svc.name}</td>
-                          <td data-label="Default Price" style={{ whiteSpace: 'nowrap' }}>₹{Number(svc.defaultPrice).toFixed(2)}</td>
+                          <td data-label="Default Price" style={{ whiteSpace: 'nowrap' }}>{formatCurrency(Number(svc.defaultPrice))}</td>
                           <td data-label="Actions">
                             <div style={{ display: 'flex', gap: '6px' }}>
                               <button className="btn-icon edit" title="Edit" onClick={() => startEdit(svc)}>

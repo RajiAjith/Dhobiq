@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable';
 import { format } from 'date-fns';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { formatCurrency } from './currencyFormatter';
 
 function arrayBufferToBase64(buffer) {
   let binary = '';
@@ -91,8 +92,8 @@ function drawItemsTable(doc, items, startY) {
     index + 1,
     item.name,
     item.quantity,
-    `₹ ${Number(item.unitPrice).toFixed(2)}`,
-    `₹ ${Number(item.total).toFixed(2)}`
+    formatCurrency(item.unitPrice),
+    formatCurrency(item.total)
   ]);
 
   autoTable(doc, {
@@ -144,10 +145,10 @@ function drawTotals(doc, totalAmount, finalY, amountPaid = null, balanceAmount =
 
   if (amountPaid !== null && balanceAmount !== null) {
     doc.text('Total Amount', boxX + 8, finalY + 9);
-    doc.text(`₹ ${Number(totalAmount).toFixed(2)}`, boxX + boxW - 4, finalY + 9, { align: 'right' });
+    doc.text(formatCurrency(totalAmount), boxX + boxW - 4, finalY + 9, { align: 'right' });
 
     doc.text('Amount Paid', boxX + 8, finalY + 18);
-    doc.text(`- ₹ ${Number(amountPaid).toFixed(2)}`, boxX + boxW - 4, finalY + 18, { align: 'right' });
+    doc.text(`- ${formatCurrency(amountPaid)}`, boxX + boxW - 4, finalY + 18, { align: 'right' });
 
     // Divider
     doc.setDrawColor(200, 200, 200);
@@ -157,11 +158,11 @@ function drawTotals(doc, totalAmount, finalY, amountPaid = null, balanceAmount =
     doc.setFontSize(11);
     doc.setTextColor(...BRAND_BLUE);
     doc.text('Balance Due', boxX + 8, finalY + 32);
-    doc.text(`₹ ${Number(balanceAmount).toFixed(2)}`, boxX + boxW - 4, finalY + 32, { align: 'right' });
+    doc.text(formatCurrency(balanceAmount), boxX + boxW - 4, finalY + 32, { align: 'right' });
   } else {
     // Normal bill totals
     doc.text('Subtotal', boxX + 8, finalY + 9);
-    doc.text(`₹ ${Number(totalAmount).toFixed(2)}`, boxX + boxW - 4, finalY + 9, { align: 'right' });
+    doc.text(formatCurrency(totalAmount), boxX + boxW - 4, finalY + 9, { align: 'right' });
 
     // Divider
     doc.setDrawColor(200, 200, 200);
@@ -171,7 +172,7 @@ function drawTotals(doc, totalAmount, finalY, amountPaid = null, balanceAmount =
     doc.setFontSize(11);
     doc.setTextColor(...BRAND_BLUE);
     doc.text('Total', boxX + 8, finalY + 23);
-    doc.text(`₹ ${Number(totalAmount).toFixed(2)}`, boxX + boxW - 4, finalY + 23, { align: 'right' });
+    doc.text(formatCurrency(totalAmount), boxX + boxW - 4, finalY + 23, { align: 'right' });
   }
 }
 

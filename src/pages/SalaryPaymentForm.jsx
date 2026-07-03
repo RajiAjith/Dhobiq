@@ -6,6 +6,7 @@ import { format } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import { ArrowLeft, Save } from 'lucide-react';
 import OfflineScreen from '../components/OfflineScreen';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function SalaryPaymentForm() {
   const navigate = useNavigate();
@@ -199,7 +200,7 @@ export default function SalaryPaymentForm() {
               <option value="">-- Choose Active Employee --</option>
               {employees.map(emp => (
                 <option key={emp.id} value={emp.id}>
-                  {emp.name} ({emp.designation}) - ₹{Number(emp.monthlySalary || 0).toLocaleString('en-IN')}/mo
+                  {emp.name} ({emp.designation}) - {formatCurrency(Number(emp.monthlySalary || 0))}/mo
                 </option>
               ))}
             </select>

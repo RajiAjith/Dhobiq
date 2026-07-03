@@ -10,6 +10,7 @@ import {
   collection, getDocs, doc, setDoc, getDoc, writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { buildPaymentSummary, getInvoicePaymentEntries } from './paymentUtils';
 
 const MIGRATION_FLAG_DOC = 'migrations/v2_bills_migration';
 
@@ -128,18 +129,55 @@ export async function runInvoicePaymentMigrationIfNeeded() {
       const chunk = docs.slice(i, i + BATCH_SIZE);
 
       for (const inv of chunk) {
+        const invRef = doc(db, 'invoices', inv.id);
+        const legacyAmountPaid = Number(inv.amountPaid || 0);
+        const totalAmount = Number(inv.totalAmount || 0);
+        const legacyPayments = Array.isArray(inv.payments) ? inv.payments : [];
+
         // If it already has paymentStatus, it's a new invoice
         if (inv.paymentStatus || inv.billIds) {
-          continue; 
+          if (legacyPayments.length === 0 && legacyAmountPaid > 0) {
+            const migratedPayments = [{
+              amount: legacyAmountPaid,
+              paymentDate: inv.paymentDate || inv.invoiceDate || inv.date || Date.now(),
+              paymentMode: 'Unknown',
+              referenceNumber: '',
+              notes: 'Migrated from legacy invoice totals',
+              createdAt: inv.paymentDate || inv.invoiceDate || inv.date || Date.now(),
+              migrated: true
+            }];
+            const summary = buildPaymentSummary(migratedPayments, totalAmount);
+            batch.update(invRef, {
+              payments: migratedPayments,
+              amountPaid: summary.amountPaid,
+              balanceAmount: summary.balanceAmount,
+              paymentStatus: summary.paymentStatus
+            });
+            migrated++;
+          }
+          continue;
         }
 
         // Convert legacy invoice document to new invoice schema
         // It carries its own legacy payment state.
-        const invRef = doc(db, 'invoices', inv.id);
+        const paymentEntries = legacyPayments.length > 0
+          ? legacyPayments
+          : (legacyAmountPaid > 0 ? [{
+              amount: legacyAmountPaid,
+              paymentDate: inv.paymentDate || inv.invoiceDate || inv.date || Date.now(),
+              paymentMode: 'Unknown',
+              referenceNumber: '',
+              notes: 'Migrated from legacy invoice totals',
+              createdAt: inv.paymentDate || inv.invoiceDate || inv.date || Date.now(),
+              migrated: true
+            }] : []);
+        const summary = buildPaymentSummary(paymentEntries, totalAmount);
+
         batch.update(invRef, {
-          paymentStatus: inv.status || 'unpaid',
-          amountPaid: inv.amountPaid || 0,
-          balanceAmount: inv.balanceAmount ?? inv.totalAmount ?? 0,
+          payments: paymentEntries,
+          amountPaid: summary.amountPaid,
+          balanceAmount: summary.balanceAmount,
+          paymentStatus: summary.paymentStatus,
           billIds: [inv.id], // Maps to the 1:1 migrated bill id
           invoiceDate: inv.invoiceDate || inv.date || Date.now()
         });

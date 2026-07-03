@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, getDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Link } from 'react-router-dom';
 import { format, startOfMonth, endOfMonth, isWithinInterval, subMonths } from 'date-fns';
@@ -15,6 +15,9 @@ import {
 } from 'recharts';
 import OfflineScreen from '../components/OfflineScreen';
 import { runBillsMigrationIfNeeded, runInvoicePaymentMigrationIfNeeded } from '../utils/migration';
+import { buildPaymentSummary, getInvoicePaymentEntries } from '../utils/paymentUtils';
+import { getAnalyticsStartDate, isDateInAnalyticsWindow } from '../utils/analytics';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 // Recharts theme colors matching our 2026 SaaS guidelines
 const COLORS = ['#003366', '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#64748b'];
@@ -50,6 +53,7 @@ export default function Dashboard() {
   const [error,          setError]          = useState(null);
   const [isOfflineError, setIsOfflineError] = useState(false);
   const [migrationDone,  setMigrationDone]  = useState(false);
+  const [analyticsStartDate, setAnalyticsStartDate] = useState(getAnalyticsStartDate());
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
@@ -90,19 +94,25 @@ export default function Dashboard() {
         expensesSnap, 
         customersSnap, 
         employeesSnap, 
-        recentBillsSnap
+        recentBillsSnap,
+        settingsSnap
       ] = await Promise.all([
         getDocs(collection(db, 'bills')),
         getDocs(collection(db, 'invoices')),
         getDocs(collection(db, 'expenses')),
         getDocs(collection(db, 'customers')),
         getDocs(collection(db, 'employees')),
-        getDocs(query(collection(db, 'bills'), orderBy('date', 'desc'), limit(5)))
+        getDocs(query(collection(db, 'bills'), orderBy('date', 'desc'), limit(5))),
+        getDoc(doc(db, 'settings', 'general'))
       ]);
 
+      const analyticsSettings = settingsSnap.exists() ? settingsSnap.data() : {};
+      const analyticsStartDateValue = getAnalyticsStartDate(analyticsSettings);
       const now = new Date();
       const currentMonthStart = startOfMonth(now);
       const currentMonthEnd = endOfMonth(now);
+
+      setAnalyticsStartDate(analyticsStartDateValue);
 
       // --- Summary Metrics Initializers ---
       let totalRevenue = 0;
@@ -138,8 +148,12 @@ export default function Dashboard() {
       invoicesSnap.forEach(d => {
         const inv = d.data();
         const total = Number(inv.totalAmount) || 0;
-        const paid = Number(inv.amountPaid) || 0;
-        const balance = Number(inv.balanceAmount ?? total);
+        const paymentEntries = getInvoicePaymentEntries(inv);
+        const fullPaymentSummary = buildPaymentSummary(paymentEntries, total);
+        const paymentsInAnalyticsWindow = paymentEntries.filter(payment => isDateInAnalyticsWindow(payment.paymentDate, analyticsStartDateValue));
+        const analyticsPaymentSummary = buildPaymentSummary(paymentsInAnalyticsWindow, total);
+        const paid = analyticsPaymentSummary.amountPaid;
+        const balance = fullPaymentSummary.balanceAmount;
         const custName = inv.customerName || 'Unknown Customer';
 
         totalRevenue += paid;
@@ -147,22 +161,31 @@ export default function Dashboard() {
 
         const invDate = new Date(inv.invoiceDate || Date.now());
         const monthKey = format(invDate, 'MMM yy');
-        
-        // Month calculations
-        if (isWithinInterval(invDate, { start: currentMonthStart, end: currentMonthEnd })) {
-          monthlyRevenue += paid;
-          invoicesThisMonth++;
-        }
 
-        if (monthlyDataMap[monthKey]) {
-          monthlyDataMap[monthKey].revenue += paid;
+        paymentsInAnalyticsWindow.forEach(payment => {
+          const paymentDate = new Date(payment.paymentDate || Date.now());
+          const paymentMonthKey = format(paymentDate, 'MMM yy');
+          if (monthlyDataMap[paymentMonthKey]) {
+            monthlyDataMap[paymentMonthKey].revenue += Number(payment.amount || 0);
+          }
+        });
+
+        // Month calculations
+        const currentMonthPaid = paymentEntries.reduce((sum, payment) => {
+          const paymentDate = new Date(payment.paymentDate || Date.now());
+          return isWithinInterval(paymentDate, { start: currentMonthStart, end: currentMonthEnd }) ? sum + Number(payment.amount || 0) : sum;
+        }, 0);
+
+        monthlyRevenue += currentMonthPaid;
+        if (isWithinInterval(invDate, { start: currentMonthStart, end: currentMonthEnd })) {
+          invoicesThisMonth++;
         }
 
         // Customer spending
         customerSpendingMap[custName] = (customerSpendingMap[custName] || 0) + paid;
 
         // Payment status counts
-        const status = inv.paymentStatus || inv.status || 'unpaid';
+        const status = fullPaymentSummary.paymentStatus || 'unpaid';
         if (paymentStatusCountMap[status] !== undefined) {
           paymentStatusCountMap[status]++;
         } else {
@@ -170,14 +193,15 @@ export default function Dashboard() {
         }
 
         // Services aggregation from invoice items
-        if (inv.items && Array.isArray(inv.items)) {
+        if (inv.items && Array.isArray(inv.items) && paid > 0) {
+          const paymentShare = total > 0 ? paid / total : 0;
           inv.items.forEach(item => {
             const name = item.name || 'Unspecified';
             const qty = Number(item.quantity) || 0;
             const itemTot = Number(item.total) || 0;
 
-            serviceUsageMap[name] = (serviceUsageMap[name] || 0) + qty;
-            serviceRevenueMap[name] = (serviceRevenueMap[name] || 0) + itemTot;
+            serviceUsageMap[name] = (serviceUsageMap[name] || 0) + qty * paymentShare;
+            serviceRevenueMap[name] = (serviceRevenueMap[name] || 0) + itemTot * paymentShare;
           });
         }
       });
@@ -190,18 +214,17 @@ export default function Dashboard() {
         const expDate = new Date(exp.date || Date.now());
         const monthKey = format(expDate, 'MMM yy');
 
-        totalExpenses += amt;
+        if (isDateInAnalyticsWindow(expDate, analyticsStartDateValue)) {
+          totalExpenses += amt;
+          if (monthlyDataMap[monthKey]) {
+            monthlyDataMap[monthKey].expenses += amt;
+          }
+          expenseCategoryMap[cat] = (expenseCategoryMap[cat] || 0) + amt;
+        }
 
         if (isWithinInterval(expDate, { start: currentMonthStart, end: currentMonthEnd })) {
           monthlyExpenses += amt;
         }
-
-        if (monthlyDataMap[monthKey]) {
-          monthlyDataMap[monthKey].expenses += amt;
-        }
-
-        // Category breakdown
-        expenseCategoryMap[cat] = (expenseCategoryMap[cat] || 0) + amt;
       });
 
       // 4. Calculate Net Profits
@@ -320,6 +343,9 @@ export default function Dashboard() {
         </div>
         <Link to="/bills/new" className="btn btn-primary">+ New Bill</Link>
       </div>
+      <p className="text-muted" style={{ fontSize: '0.78rem', marginTop: '-6px', marginBottom: '10px' }}>
+        Business analytics are shown from {format(analyticsStartDate, 'dd MMM yyyy')} onward.
+      </p>
 
       {/* Analytics Summary Cards (10 Cards Grid) */}
       {loading ? (
@@ -337,7 +363,7 @@ export default function Dashboard() {
               <DollarSign size={14} className="text-success" /> Monthly Revenue
             </span>
             <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
-              ₹{analytics.monthlyRevenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatCurrency(analytics.monthlyRevenue)}
             </p>
           </div>
 
@@ -347,7 +373,7 @@ export default function Dashboard() {
               <TrendingDown size={14} className="text-danger" /> Monthly Expenses
             </span>
             <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
-              ₹{analytics.monthlyExpenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatCurrency(analytics.monthlyExpenses)}
             </p>
           </div>
 
@@ -357,7 +383,7 @@ export default function Dashboard() {
               <TrendingUp size={14} style={{ color: 'var(--primary)' }} /> Total Revenue
             </span>
             <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
-              ₹{analytics.totalRevenue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatCurrency(analytics.totalRevenue)}
             </p>
           </div>
 
@@ -367,7 +393,7 @@ export default function Dashboard() {
               <CreditCard size={14} className="text-warning" /> Total Expenses
             </span>
             <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0' }}>
-              ₹{analytics.totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatCurrency(analytics.totalExpenses)}
             </p>
           </div>
 
@@ -377,7 +403,7 @@ export default function Dashboard() {
               <Activity size={14} style={{ color: analytics.netProfit >= 0 ? 'var(--success)' : 'var(--danger)' }} /> Net Profit
             </span>
             <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0', color: analytics.netProfit >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-              ₹{analytics.netProfit.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatCurrency(analytics.netProfit)}
             </p>
           </div>
 
@@ -387,7 +413,7 @@ export default function Dashboard() {
               <AlertCircle size={14} className="text-danger" /> Receivables
             </span>
             <p style={{ fontSize: '1.25rem', fontWeight: 700, margin: '6px 0 0 0', color: 'var(--danger)' }}>
-              ₹{analytics.pendingPayments.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              {formatCurrency(analytics.pendingPayments)}
             </p>
           </div>
 
@@ -464,7 +490,7 @@ export default function Dashboard() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => formatCurrency(value)} />
                         <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
                         <Bar dataKey="revenue" name="Revenue" fill="#003366" radius={[4, 4, 0, 0]} />
                         <Bar dataKey="expenses" name="Expenses" fill="#ef4444" radius={[4, 4, 0, 0]} />
@@ -488,7 +514,7 @@ export default function Dashboard() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => formatCurrency(value)} />
                         <Area type="monotone" dataKey="profit" name="Net Profit" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorProfit)" />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -510,7 +536,7 @@ export default function Dashboard() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => formatCurrency(value)} />
                         <Area type="monotone" dataKey="revenue" name="Revenue" stroke="#003366" strokeWidth={2.5} fillOpacity={1} fill="url(#colorRevenue)" />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -526,7 +552,7 @@ export default function Dashboard() {
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eee" />
                         <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#666' }} />
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                        <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => formatCurrency(value)} />
                         <Line type="monotone" dataKey="expenses" name="Expenses" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4 }} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -561,7 +587,7 @@ export default function Dashboard() {
                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                               ))}
                             </Pie>
-                            <Tooltip formatter={(value) => `₹${value.toFixed(0)}`} />
+                            <Tooltip formatter={(value) => formatCurrency(value)} />
                           </PieChart>
                         </ResponsiveContainer>
                       </div>
@@ -569,7 +595,7 @@ export default function Dashboard() {
                         {analytics.expenseBreakdownData.map((entry, idx) => (
                           <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: COLORS[idx % COLORS.length] }}></span>
-                            <span>{entry.name}: <strong>₹{entry.value.toFixed(0)}</strong></span>
+                            <span>{entry.name}: <strong>{formatCurrency(entry.value)}</strong></span>
                           </div>
                         ))}
                       </div>
@@ -636,7 +662,7 @@ export default function Dashboard() {
                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                               ))}
                             </Pie>
-                            <Tooltip formatter={(value) => `₹${value.toFixed(0)}`} />
+                            <Tooltip formatter={(value) => formatCurrency(value)} />
                           </PieChart>
                         </ResponsiveContainer>
                       </div>
@@ -644,7 +670,7 @@ export default function Dashboard() {
                         {analytics.topServicesData.map((entry, idx) => (
                           <div key={entry.name} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                             <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: COLORS[idx % COLORS.length] }}></span>
-                            <span>{entry.name}: <strong>₹{entry.value.toFixed(0)}</strong></span>
+                            <span>{entry.name}: <strong>{formatCurrency(entry.value)}</strong></span>
                           </div>
                         ))}
                       </div>
@@ -691,7 +717,7 @@ export default function Dashboard() {
                           <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#eee" />
                           <XAxis type="number" axisLine={false} tickLine={false} />
                           <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11 }} width={90} />
-                          <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => `₹${value.toFixed(0)}`} />
+                          <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: 'var(--shadow-md)' }} formatter={(value) => formatCurrency(value)} />
                           <Bar dataKey="value" name="Amount Paid" fill="#10b981" radius={[0, 4, 4, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
@@ -765,7 +791,7 @@ export default function Dashboard() {
                     <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
                       {bill.date ? format(new Date(bill.date), 'dd MMM yy') : ''}
                     </td>
-                    <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>₹{Number(bill.totalAmount).toFixed(2)}</td>
+                    <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>{formatCurrency(Number(bill.totalAmount))}</td>
                     <td>
                       {bill.invoiceId
                         ? <span className="badge badge-info" style={{ fontSize: '0.7rem' }}>Invoiced</span>

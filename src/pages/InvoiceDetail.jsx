@@ -1,26 +1,30 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { doc, getDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { format } from 'date-fns';
 import { generateInvoicePDF, generateBillPDF } from '../utils/pdfGenerator';
-import { Download, ArrowLeft, Receipt, CreditCard } from 'lucide-react';
+import { Download, ArrowLeft, Receipt, CreditCard, Edit3, Trash2 } from 'lucide-react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { updateDoc } from 'firebase/firestore';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
+import InvoicePaymentModal from '../components/InvoicePaymentModal';
+import { deleteInvoicePayment, getInvoicePaymentEntries, getInvoicePaymentSummary, persistInvoicePayment } from '../utils/paymentUtils';
+import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function InvoiceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const [invoice,        setInvoice]        = useState(null);
-  const [customer,       setCustomer]       = useState(null);
-  const [includedBills,  setIncludedBills]  = useState([]);
-  const [loading,        setLoading]        = useState(true);
+  const [invoice, setInvoice] = useState(null);
+  const [customer, setCustomer] = useState(null);
+  const [includedBills, setIncludedBills] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [isOfflineError, setIsOfflineError] = useState(false);
 
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
-  const [paymentAmount,    setPaymentAmount]    = useState('');
+  const [paymentModalMode, setPaymentModalMode] = useState('add');
+  const [editingPaymentIndex, setEditingPaymentIndex] = useState(null);
+  const [activePayment, setActivePayment] = useState(null);
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
@@ -35,13 +39,30 @@ export default function InvoiceDetail() {
         return;
       }
       const invData = { id: invSnap.id, ...invSnap.data() };
-      setInvoice(invData);
+      const paymentSummary = getInvoicePaymentSummary(invData);
+      const normalizedInvoice = {
+        ...invData,
+        payments: getInvoicePaymentEntries(invData),
+        amountPaid: paymentSummary.amountPaid,
+        balanceAmount: paymentSummary.balanceAmount,
+        paymentStatus: paymentSummary.paymentStatus
+      };
 
-      // Load customer
+      const needsMigration = (!Array.isArray(invData.payments) || invData.payments.length === 0) && Number(invData.amountPaid || 0) > 0;
+      if (needsMigration) {
+        await updateDoc(doc(db, 'invoices', id), {
+          payments: normalizedInvoice.payments,
+          amountPaid: normalizedInvoice.amountPaid,
+          balanceAmount: normalizedInvoice.balanceAmount,
+          paymentStatus: normalizedInvoice.paymentStatus
+        });
+      }
+
+      setInvoice(normalizedInvoice);
+
       const custSnap = await getDoc(doc(db, 'customers', invData.customerId));
       if (custSnap.exists()) setCustomer({ id: custSnap.id, ...custSnap.data() });
 
-      // Load included bills
       const billIds = invData.billIds || [];
       const billDocs = await Promise.all(billIds.map(bid => getDoc(doc(db, 'bills', bid))));
       const bills = billDocs
@@ -58,10 +79,10 @@ export default function InvoiceDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, navigate, reportError, clearWasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, navigate, reportError, clearWasOffline]);
 
-  useEffect(() => { loadData(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (isOnline && wasOffline) loadData(); }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadData(); }, [id]);
+  useEffect(() => { if (isOnline && wasOffline) loadData(); }, [isOnline, wasOffline]);
 
   const handleDownloadInvoicePDF = () => {
     if (invoice && customer) generateInvoicePDF(invoice, customer, includedBills);
@@ -71,43 +92,77 @@ export default function InvoiceDetail() {
     if (customer) generateBillPDF(bill, customer);
   };
 
-  const handleSavePayment = async () => {
-    if (!invoice || !paymentAmount) return;
-    const amount = Number(paymentAmount);
-    if (isNaN(amount) || amount <= 0) {
-      alert('Please enter a valid amount.');
-      return;
-    }
+  const openAddPaymentModal = () => {
+    setActivePayment(null);
+    setEditingPaymentIndex(null);
+    setPaymentModalMode('add');
+    setPaymentModalOpen(true);
+  };
 
-    const currentPaid = invoice.amountPaid || 0;
-    const newPaid = currentPaid + amount;
-    const total = invoice.totalAmount;
+  const openEditPaymentModal = (payment, index) => {
+    setActivePayment(payment);
+    setEditingPaymentIndex(index);
+    setPaymentModalMode('edit');
+    setPaymentModalOpen(true);
+  };
 
-    if (newPaid > total) {
-      alert('Payment amount cannot exceed total balance.');
-      return;
-    }
+  const closePaymentModal = () => {
+    setPaymentModalOpen(false);
+    setActivePayment(null);
+    setEditingPaymentIndex(null);
+    setPaymentModalMode('add');
+  };
 
-    const balanceAmount = total - newPaid;
-    let paymentStatus = 'unpaid';
-    if (newPaid > 0) {
-      paymentStatus = newPaid >= total ? 'paid' : 'partial';
-    }
+  const handleSavePayment = async ({ paymentForm }) => {
+    if (!invoice) return;
 
     try {
-      await updateDoc(doc(db, 'invoices', invoice.id), {
-        amountPaid: newPaid,
-        balanceAmount,
-        paymentStatus
+      const updatedSummary = await persistInvoicePayment({
+        dbInstance: db,
+        invoice,
+        paymentForm,
+        mode: paymentModalMode,
+        editingPaymentIndex,
+        invoiceId: invoice.id
       });
 
-      setInvoice({ ...invoice, amountPaid: newPaid, balanceAmount, paymentStatus });
-      setPaymentModalOpen(false);
-      setPaymentAmount('');
+      setInvoice({
+        ...invoice,
+        payments: updatedSummary.payments,
+        amountPaid: updatedSummary.amountPaid,
+        balanceAmount: updatedSummary.balanceAmount,
+        paymentStatus: updatedSummary.paymentStatus
+      });
     } catch (error) {
       console.error('Error saving payment:', error);
       reportError(error);
-      alert('Failed to save payment.');
+      throw error;
+    }
+  };
+
+  const handleDeletePayment = async (index) => {
+    if (!invoice) return;
+    if (!window.confirm('Delete this payment entry?')) return;
+
+    try {
+      const updatedSummary = await deleteInvoicePayment({
+        dbInstance: db,
+        invoice,
+        paymentIndex: index,
+        invoiceId: invoice.id
+      });
+
+      setInvoice({
+        ...invoice,
+        payments: updatedSummary.payments,
+        amountPaid: updatedSummary.amountPaid,
+        balanceAmount: updatedSummary.balanceAmount,
+        paymentStatus: updatedSummary.paymentStatus
+      });
+    } catch (error) {
+      console.error('Error deleting payment:', error);
+      reportError(error);
+      alert('Failed to delete payment.');
     }
   };
 
@@ -140,11 +195,11 @@ export default function InvoiceDetail() {
   if (!invoice) return null;
 
   const periodFrom = invoice.periodFrom ? format(new Date(invoice.periodFrom), 'dd MMM yyyy') : '';
-  const periodTo   = invoice.periodTo   ? format(new Date(invoice.periodTo),   'dd MMM yyyy') : '';
+  const periodTo = invoice.periodTo ? format(new Date(invoice.periodTo), 'dd MMM yyyy') : '';
+  const paymentHistory = Array.isArray(invoice.payments) ? invoice.payments : [];
 
   return (
     <div>
-      {/* Back + Actions */}
       <div className="flex-between mb-2">
         <button className="btn btn-secondary" onClick={() => navigate('/invoices')}>
           <ArrowLeft size={16} /> Back
@@ -154,7 +209,6 @@ export default function InvoiceDetail() {
         </button>
       </div>
 
-      {/* Invoice Header */}
       <div className="card">
         <div className="invoice-detail-header">
           <div>
@@ -172,12 +226,11 @@ export default function InvoiceDetail() {
           <div className="invoice-detail-total">
             <span className="text-muted" style={{ fontSize: '0.85rem' }}>Total Amount</span>
             <span style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--primary)' }}>
-              ₹{Number(invoice.totalAmount).toFixed(2)}
+              {formatCurrency(Number(invoice.totalAmount))}
             </span>
           </div>
         </div>
 
-        {/* Customer Info */}
         <div className="detail-info-grid">
           <div className="detail-info-block">
             <span className="detail-label">Customer</span>
@@ -204,7 +257,6 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      {/* Consolidated Items */}
       <div className="card">
         <h3 className="card-title">Consolidated Items</h3>
         <div className="table-responsive">
@@ -224,8 +276,8 @@ export default function InvoiceDetail() {
                   <td style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>{i + 1}</td>
                   <td style={{ fontWeight: 500 }}>{item.name}</td>
                   <td style={{ textAlign: 'center' }}>{item.quantity}</td>
-                  <td style={{ textAlign: 'right' }}>₹{Number(item.unitPrice).toFixed(2)}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 500 }}>₹{Number(item.total).toFixed(2)}</td>
+                  <td style={{ textAlign: 'right' }}>{formatCurrency(Number(item.unitPrice))}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatCurrency(Number(item.total))}</td>
                 </tr>
               ))}
             </tbody>
@@ -234,20 +286,20 @@ export default function InvoiceDetail() {
         <div className="total-section">
           <div className="total-row">
             <span>Total Amount:</span>
-            <span>₹{Number(invoice.totalAmount).toFixed(2)}</span>
+            <span>{formatCurrency(Number(invoice.totalAmount))}</span>
           </div>
           <div className="total-row" style={{ color: 'var(--success)' }}>
             <span>Amount Paid:</span>
-            <span>₹{Number(invoice.amountPaid || 0).toFixed(2)}</span>
+            <span>{formatCurrency(Number(invoice.amountPaid || 0))}</span>
           </div>
           <div className="total-row grand-total" style={{ color: 'var(--danger)' }}>
             <span>Balance Due:</span>
-            <span>₹{Number(invoice.balanceAmount ?? invoice.totalAmount).toFixed(2)}</span>
+            <span>{formatCurrency(Number(invoice.balanceAmount ?? invoice.totalAmount))}</span>
           </div>
-          
+
           {(invoice.balanceAmount ?? invoice.totalAmount) > 0 && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
-              <button onClick={() => setPaymentModalOpen(true)} className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button onClick={openAddPaymentModal} className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <CreditCard size={16} /> Add Payment
               </button>
             </div>
@@ -255,7 +307,55 @@ export default function InvoiceDetail() {
         </div>
       </div>
 
-      {/* Included Bills */}
+      <div className="card">
+        <div className="flex-between mb-2">
+          <h3 className="card-title" style={{ margin: 0 }}>Payment History</h3>
+          <button onClick={openAddPaymentModal} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CreditCard size={16} /> Record Payment
+          </button>
+        </div>
+
+        {paymentHistory.length === 0 ? (
+          <p className="text-muted">No payment history recorded yet.</p>
+        ) : (
+          <div className="table-responsive">
+            <table className="table card-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Amount</th>
+                  <th>Mode</th>
+                  <th>Reference</th>
+                  <th>Notes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentHistory.map((payment, index) => (
+                  <tr key={`${payment.createdAt || index}-${index}`}>
+                    <td>{payment.paymentDate ? format(new Date(payment.paymentDate), 'dd MMM yyyy') : ''}</td>
+                    <td>{formatCurrency(Number(payment.amount || 0))}</td>
+                    <td>{payment.paymentMode || 'Unknown'}</td>
+                    <td>{payment.referenceNumber || '—'}</td>
+                    <td style={{ maxWidth: '220px', whiteSpace: 'normal' }}>{payment.notes || '—'}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button onClick={() => openEditPaymentModal(payment, index)} className="btn-icon" title="Edit Payment">
+                          <Edit3 size={16} />
+                        </button>
+                        <button onClick={() => handleDeletePayment(index)} className="btn-icon delete" title="Delete Payment">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="card">
         <h3 className="card-title">Included Bills ({includedBills.length})</h3>
         {includedBills.length === 0 ? (
@@ -285,7 +385,7 @@ export default function InvoiceDetail() {
                       {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
                     </td>
                     <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>
-                      ₹{Number(bill.totalAmount).toFixed(2)}
+                      {formatCurrency(Number(bill.totalAmount))}
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: '8px' }}>
@@ -305,35 +405,15 @@ export default function InvoiceDetail() {
         )}
       </div>
 
-      {/* Payment Modal */}
-      {paymentModalOpen && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '400px', margin: 0 }}>
-            <h3 className="card-title">Add Payment</h3>
-            <p><strong>Invoice:</strong> {invoice.invoiceNumber || invoice.id}</p>
-            <p><strong>Balance:</strong> ₹{Number(invoice.balanceAmount ?? invoice.totalAmount).toFixed(2)}</p>
-            
-            <div className="form-group" style={{ marginTop: '15px' }}>
-              <label>Payment Amount (₹)</label>
-              <input
-                type="number"
-                min="1"
-                max={invoice.balanceAmount ?? invoice.totalAmount}
-                step="0.01"
-                className="form-control"
-                value={paymentAmount}
-                onChange={e => setPaymentAmount(e.target.value)}
-                autoFocus
-              />
-            </div>
-            
-            <div className="action-row" style={{ marginTop: '20px' }}>
-              <button onClick={handleSavePayment} className="btn btn-primary" style={{ width: '100%' }}>Save Payment</button>
-              <button onClick={() => setPaymentModalOpen(false)} className="btn btn-secondary" style={{ width: '100%' }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <InvoicePaymentModal
+        isOpen={paymentModalOpen}
+        invoice={invoice}
+        payment={activePayment}
+        paymentIndex={editingPaymentIndex}
+        mode={paymentModalMode}
+        onClose={closePaymentModal}
+        onSave={handleSavePayment}
+      />
     </div>
   );
 }
