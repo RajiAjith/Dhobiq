@@ -1,21 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { 
-  LogOut, Home, Users, Receipt, FileText, Settings, 
-  Menu, X, Briefcase, CreditCard, BarChart3, Sliders, ChevronDown 
+import {
+  LogOut, Home, Users, Receipt, FileText, Settings,
+  Menu, X, Briefcase, CreditCard, BarChart3, Sliders, ChevronDown
 } from 'lucide-react';
 
 export default function Layout() {
   const { logout } = useAuth();
-  const navigate   = useNavigate();
-  const location   = useLocation();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
 
-  // Close sheet on path change
+  // Close bottom sheet on route change
   useEffect(() => {
     setMoreSheetOpen(false);
   }, [location.pathname]);
+
+  // Handle glassmorphism scrolled header effect
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 15);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  // Body scroll lock during active mobile bottom sheet overlay
+  useEffect(() => {
+    if (moreSheetOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [moreSheetOpen]);
 
   async function handleLogout() {
     try {
@@ -26,152 +48,168 @@ export default function Layout() {
     }
   }
 
-  const isActive = (path) =>
-    location.pathname === path ||
-    (path !== '/' && location.pathname.startsWith(path))
-      ? 'active'
-      : '';
+  const isActive = (path) => {
+    if (path === '/') {
+      return location.pathname === '/' ? 'active' : '';
+    }
+    return location.pathname.startsWith(path) ? 'active' : '';
+  };
+
+  const moreItems = [
+    { to: '/expenses', icon: CreditCard, label: 'Expenses', color: 'var(--accent-expenses)', bg: 'var(--orange-bg)' },
+    { to: '/employees', icon: Briefcase, label: 'Employees', color: 'var(--accent-employees)', bg: 'var(--pink-bg)' },
+    { to: '/reports', icon: BarChart3, label: 'Reports', color: 'var(--accent-reports)', bg: 'var(--teal-bg)' },
+    { to: '/services', icon: Settings, label: 'Services', color: 'var(--accent-services)', bg: 'var(--purple-bg)' },
+    { to: '/settings', icon: Sliders, label: 'Settings', color: 'var(--accent-settings)', bg: 'var(--primary-light)' },
+  ];
 
   return (
     <div className="app-container">
-      <header className="header">
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      <header className={`header ${scrolled ? 'scrolled' : ''}`}>
         <Link to="/" className="header-brand">
-          <img
-            src="/fflogo.png"
-            alt="Dhobiq Logo"
-            style={{ height: '34px', width: 'auto', marginRight: '8px' }}
-            onError={e => { e.target.style.display = 'none'; }}
-          />
-          <h1>Dhobiq Laundry</h1>
+          <div className="header-brand-logo">
+            <img src="/fflogo.png" alt="Dhobiq Logo" onError={e => e.target.style.display = 'none'} />
+          </div>
+          <div className="flex-col">
+            <span className="header-brand-name">Dhobiq Laundry</span>
+            <span className="header-brand-tagline">Business Admin</span>
+          </div>
         </Link>
 
-        {/* Desktop Navigation (min-width: 768px) */}
-        <nav className="nav-links desktop-nav-links">
-          <Link to="/" className={isActive('/')} title="Dashboard">
+        {/* Desktop Main Navigation */}
+        <nav className="desktop-nav">
+          <Link to="/" className={`desktop-nav-link nav-home ${isActive('/')}`}>
             <Home size={16} />
-            <span className="nav-label">Home</span>
+            <span>Home</span>
           </Link>
-          <Link to="/bills" className={isActive('/bills')} title="Bills">
+          <Link to="/bills" className={`desktop-nav-link nav-bills ${isActive('/bills')}`}>
             <Receipt size={16} />
-            <span className="nav-label">Bills</span>
+            <span>Bills</span>
           </Link>
-          <Link to="/invoices" className={isActive('/invoices')} title="Invoices">
+          <Link to="/invoices" className={`desktop-nav-link nav-invoices ${isActive('/invoices')}`}>
             <FileText size={16} />
-            <span className="nav-label">Invoice</span>
+            <span>Invoices</span>
           </Link>
-          <Link to="/customers" className={isActive('/customers')} title="Customers">
+          <Link to="/customers" className={`desktop-nav-link nav-customers ${isActive('/customers')}`}>
             <Users size={16} />
-            <span className="nav-label">Customers</span>
-          </Link>
-          <Link to="/expenses" className={isActive('/expenses')} title="Expenses">
-            <CreditCard size={16} />
-            <span className="nav-label">Expenses</span>
-          </Link>
-          <Link to="/employees" className={isActive('/employees')} title="Employees">
-            <Briefcase size={16} />
-            <span className="nav-label">Employees</span>
-          </Link>
-          <Link to="/reports" className={isActive('/reports')} title="Reports">
-            <BarChart3 size={16} />
-            <span className="nav-label">Reports</span>
+            <span>Customers</span>
           </Link>
 
-          {/* More Dropdown for Desktop */}
-          <div className="nav-dropdown">
-            <button className="nav-dropdown-trigger" title="More Options">
-              <Settings size={16} />
-              <span className="nav-label">Configure</span>
+          {/* More options dropdown for Desktop */}
+          <div className="desktop-nav-dropdown">
+            <button className="desktop-nav-dropdown-trigger">
+              <Sliders size={16} />
+              <span>Configure</span>
               <ChevronDown size={12} />
             </button>
-            <div className="nav-dropdown-menu">
-              <Link to="/services" className={isActive('/services')}>
-                <Settings size={14} /> Services
+            <div className="desktop-nav-dropdown-menu">
+              <Link to="/expenses" className={`desktop-nav-dropdown-item ${isActive('/expenses')}`}>
+                <div className="icon-box icon-box-sm icon-box--orange" style={{ marginRight: 8 }}><CreditCard size={14} /></div>
+                Expenses
               </Link>
-              <Link to="/settings" className={isActive('/settings')}>
-                <Sliders size={14} /> Settings
+              <Link to="/employees" className={`desktop-nav-dropdown-item ${isActive('/employees')}`}>
+                <div className="icon-box icon-box-sm icon-box--pink" style={{ marginRight: 8 }}><Briefcase size={14} /></div>
+                Employees
               </Link>
-              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0' }} />
-              <button onClick={handleLogout} style={{ color: 'var(--danger)' }}>
-                <LogOut size={14} /> Logout
+              <Link to="/reports" className={`desktop-nav-dropdown-item ${isActive('/reports')}`}>
+                <div className="icon-box icon-box-sm icon-box--teal" style={{ marginRight: 8 }}><BarChart3 size={14} /></div>
+                Reports
+              </Link>
+              <div className="dropdown-divider" />
+              <Link to="/services" className={`desktop-nav-dropdown-item ${isActive('/services')}`}>
+                <div className="icon-box icon-box-sm icon-box--purple" style={{ marginRight: 8 }}><Settings size={14} /></div>
+                Services
+              </Link>
+              <Link to="/settings" className={`desktop-nav-dropdown-item ${isActive('/settings')}`}>
+                <div className="icon-box icon-box-sm icon-box--primary" style={{ marginRight: 8 }}><Sliders size={14} /></div>
+                Settings
+              </Link>
+              <div className="dropdown-divider" />
+              <button onClick={handleLogout} className="desktop-nav-dropdown-item danger">
+                <div className="icon-box icon-box-sm icon-box--danger" style={{ marginRight: 8 }}><LogOut size={14} /></div>
+                Logout
               </button>
             </div>
           </div>
         </nav>
       </header>
 
-      {/* Mobile Navigation Bottom Bar (max-width: 767px) */}
-      <nav className="nav-links mobile-nav-links">
-        <Link to="/" className={isActive('/')} title="Dashboard">
-          <Home size={18} />
-          <span className="nav-label">Home</span>
+      {/* ── MOBILE BOTTOM NAVIGATION ──────────────────────────────────────── */}
+      <nav className="mobile-nav">
+        <Link to="/" className={`mobile-nav-item nav-home ${isActive('/')}`}>
+          <span className="mobile-nav-icon"><Home size={20} /></span>
+          <span className="mobile-nav-label">Home</span>
         </Link>
-        <Link to="/bills" className={isActive('/bills')} title="Bills">
-          <Receipt size={18} />
-          <span className="nav-label">Bills</span>
+        <Link to="/bills" className={`mobile-nav-item nav-bills ${isActive('/bills')}`}>
+          <span className="mobile-nav-icon"><Receipt size={20} /></span>
+          <span className="mobile-nav-label">Bills</span>
         </Link>
-        <Link to="/invoices" className={isActive('/invoices')} title="Invoices">
-          <FileText size={18} />
-          <span className="nav-label">Invoice</span>
+        <Link to="/invoices" className={`mobile-nav-item nav-invoices ${isActive('/invoices')}`}>
+          <span className="mobile-nav-icon"><FileText size={20} /></span>
+          <span className="mobile-nav-label">Invoices</span>
         </Link>
-        <Link to="/customers" className={isActive('/customers')} title="Customers">
-          <Users size={18} />
-          <span className="nav-label">Customers</span>
+        <Link to="/customers" className={`mobile-nav-item nav-customers ${isActive('/customers')}`}>
+          <span className="mobile-nav-icon"><Users size={20} /></span>
+          <span className="mobile-nav-label">Customers</span>
         </Link>
-        <button 
-          onClick={() => setMoreSheetOpen(true)} 
-          className={`btn-icon-nav ${moreSheetOpen ? 'active' : ''}`} 
-          title="More Menus"
-          style={{ borderTop: moreSheetOpen ? '2px solid var(--primary)' : 'none' }}
+        <button
+          onClick={() => setMoreSheetOpen(true)}
+          className={`mobile-nav-item ${moreSheetOpen ? 'active' : ''}`}
+          aria-label="Open management menu"
         >
-          <Menu size={18} />
-          <span className="nav-label">More</span>
+          <span className="mobile-nav-icon"><Menu size={20} /></span>
+          <span className="mobile-nav-label">More</span>
         </button>
       </nav>
 
-      {/* Mobile Drawer Slide-up Bottom Sheet (max-width: 767px) */}
-      <div 
-        className={`bottom-sheet-overlay ${moreSheetOpen ? 'active' : ''}`}
+      {/* ── MOBILE MORE BOTTOM SHEET ──────────────────────────────────────── */}
+      <div
+        className={`sheet-overlay ${moreSheetOpen ? 'open' : ''}`}
         onClick={() => setMoreSheetOpen(false)}
       >
-        <div 
-          className="bottom-sheet-content" 
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="bottom-sheet-header">
-            <h3 className="bottom-sheet-title">Management Menu</h3>
-            <button className="bottom-sheet-close" onClick={() => setMoreSheetOpen(false)}>
-              <X size={20} />
+        <div className="sheet-content" onClick={e => e.stopPropagation()}>
+          <div className="sheet-handle" />
+          <div className="sheet-header">
+            <h3 className="sheet-title">Management Menu</h3>
+            <button className="sheet-close" onClick={() => setMoreSheetOpen(false)}>
+              <X size={18} />
             </button>
           </div>
-          <div className="bottom-sheet-grid">
-            <Link to="/expenses" className="bottom-sheet-item">
-              <CreditCard size={22} className="text-muted" />
-              <span>Expenses</span>
-            </Link>
-            <Link to="/employees" className="bottom-sheet-item">
-              <Briefcase size={22} className="text-muted" />
-              <span>Employees</span>
-            </Link>
-            <Link to="/reports" className="bottom-sheet-item">
-              <BarChart3 size={22} className="text-muted" />
-              <span>Reports</span>
-            </Link>
-            <Link to="/services" className="bottom-sheet-item">
-              <Settings size={22} className="text-muted" />
-              <span>Services</span>
-            </Link>
-            <Link to="/settings" className="bottom-sheet-item">
-              <Sliders size={22} className="text-muted" />
-              <span>Settings</span>
-            </Link>
-            <button onClick={handleLogout} className="bottom-sheet-item danger">
-              <LogOut size={22} />
+
+          <div className="more-grid">
+            {moreItems.map(item => {
+              const IconComp = item.icon;
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={`more-grid-item ${isActive(item.to) ? 'active' : ''}`}
+                >
+                  <div
+                    className="icon-box icon-box-lg"
+                    style={{ backgroundColor: item.bg, color: item.color }}
+                  >
+                    <IconComp size={22} />
+                  </div>
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+            <button onClick={handleLogout} className="more-grid-item danger">
+              <div
+                className="icon-box icon-box-lg"
+                style={{ backgroundColor: 'var(--danger-bg)', color: 'var(--danger)' }}
+              >
+                <LogOut size={22} />
+              </div>
               <span>Logout</span>
             </button>
           </div>
         </div>
       </div>
 
+      {/* ── MAIN CONTENT ──────────────────────────────────────────────────── */}
       <main className="main-content">
         <Outlet />
       </main>

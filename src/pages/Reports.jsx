@@ -3,15 +3,36 @@ import { collection, getDocs, query, orderBy, doc, getDoc } from 'firebase/fires
 import { db } from '../firebase';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
-import { FileText, Calendar, Search, Download, RefreshCw, BarChart, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
+import { 
+  FileText, 
+  Calendar, 
+  Search, 
+  Download, 
+  RefreshCw, 
+  BarChart, 
+  TrendingUp, 
+  TrendingDown, 
+  DollarSign, 
+  Users, 
+  User, 
+  ShoppingBag,
+  Receipt
+} from 'lucide-react';
 import OfflineScreen from '../components/OfflineScreen';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { buildReportSummary, getExpensesTotal, getInvoiceRevenueForPeriod, getInvoiceRevenueTotal, getReportDateRange } from '../utils/reportUtils';
+import { 
+  buildReportSummary, 
+  getExpensesTotal, 
+  getInvoiceRevenueForPeriod, 
+  getInvoiceRevenueTotal, 
+  getReportDateRange 
+} from '../utils/reportUtils';
+import { getInvoicePaymentEntries } from '../utils/paymentUtils';
 import { formatCurrency } from '../utils/currencyFormatter';
 
 export default function Reports() {
-  const [reportType, setReportType] = useState('revenue');
+  const [reportType, setReportType] = useState('sales');
   
   // Filters
   const [fromDate, setFromDate] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'));
@@ -19,7 +40,7 @@ export default function Reports() {
   const [selectedCustomer, setSelectedCustomer] = useState('all');
   const [selectedEmployee, setSelectedEmployee] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
-
+  
   // Filter Source Lists
   const [customers, setCustomers] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -27,12 +48,23 @@ export default function Reports() {
 
   // Report Data
   const [reportData, setReportData] = useState([]);
-  const [summary, setSummary] = useState({ revenue: 0, expenses: 0, profit: 0, count: 0 });
+  const [summary, setSummary] = useState({ sales: 0, revenue: 0, expenses: 0, profit: 0, count: 0 });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [isOfflineError, setIsOfflineError] = useState(false);
 
   const { isOnline, wasOffline, reportError } = useNetwork();
+
+  const reportTypes = [
+    { id: 'sales', label: 'Sales', icon: Receipt, color: '#2563eb' },
+    { id: 'revenue', label: 'Revenue', icon: TrendingUp, color: '#16a34a' },
+    { id: 'expense', label: 'Expenses', icon: TrendingDown, color: '#dc2626' },
+    { id: 'pnl', label: 'P & L', icon: DollarSign, color: '#2563eb' },
+    { id: 'salary', label: 'Staff Salary', icon: Users, color: '#7c3aed' },
+    { id: 'category', label: 'Categories', icon: BarChart, color: '#ea580c' },
+    { id: 'customer', label: 'Customers', icon: User, color: '#0891b2' },
+    { id: 'service', label: 'Services', icon: ShoppingBag, color: '#db2777' },
+  ];
 
   // Load filter metadata lists
   const loadFilters = useCallback(async () => {
@@ -88,6 +120,7 @@ export default function Reports() {
       let invoices = [];
       let expenses = [];
       let salaries = [];
+      let bills = [];
 
       if (reportType === 'revenue' || reportType === 'customer' || reportType === 'service' || reportType === 'pnl' || reportType === 'expense' || reportType === 'category') {
         const snap = await getDocs(collection(db, 'invoices'));
@@ -96,19 +129,24 @@ export default function Reports() {
         });
       }
 
-      if (reportType === 'expense' || reportType === 'category' || reportType === 'pnl') {
+      if (reportType === 'expense' || reportType === 'category' || reportType === 'pnl' || reportType === 'sales') {
         const snap = await getDocs(collection(db, 'expenses'));
         snap.forEach(d => {
-          const exp = d.data();
-          expenses.push({ id: d.id, ...exp });
+          expenses.push({ id: d.id, ...d.data() });
         });
       }
 
       if (reportType === 'salary') {
         const snap = await getDocs(collection(db, 'salary_payments'));
         snap.forEach(d => {
-          const sal = d.data();
-          salaries.push({ id: d.id, ...sal });
+          salaries.push({ id: d.id, ...d.data() });
+        });
+      }
+
+      if (reportType === 'sales') {
+        const snap = await getDocs(collection(db, 'bills'));
+        snap.forEach(d => {
+          bills.push({ id: d.id, ...d.data() });
         });
       }
 
@@ -135,7 +173,40 @@ export default function Reports() {
       const revenueFromInvoices = getInvoiceRevenueTotal(filteredInvoices, start, end);
       const expensesFromFilteredData = getExpensesTotal(filteredExpenses, start, end);
 
-      if (reportType === 'revenue') {
+      if (reportType === 'sales') {
+        let filteredBills = bills.filter((bill) => {
+          const billDate = new Date(bill.date || Date.now());
+          return billDate >= start && billDate <= end;
+        });
+
+        if (selectedCustomer !== 'all') {
+          filteredBills = filteredBills.filter((bill) => bill.customerId === selectedCustomer);
+        }
+
+        resultData = filteredBills.map((bill) => {
+          const statusLabel = bill.invoiceId ? 'INVOICED' : 'PENDING';
+          return {
+            col1: bill.billNumber || bill.id,
+            col2: bill.customerName || 'Unknown Customer',
+            col3: bill.date ? format(new Date(bill.date), 'dd MMM yyyy') : '',
+            col4: bill.items ? `${bill.items.length} items` : '0 items',
+            col5: formatCurrency(Number(bill.totalAmount || 0)),
+            col6: statusLabel
+          };
+        });
+
+        const totalSalesAmount = filteredBills.reduce((acc, b) => acc + Number(b.totalAmount || 0), 0);
+        const totalExpensesAmount = getExpensesTotal(filteredExpenses, start, end);
+
+        setSummary({
+          sales: totalSalesAmount,
+          revenue: revenueFromInvoices,
+          expenses: totalExpensesAmount,
+          profit: totalSalesAmount - totalExpensesAmount,
+          count: resultData.length
+        });
+      }
+      else if (reportType === 'revenue') {
         resultData = filteredInvoices
           .map((inv) => {
             const paid = getInvoiceRevenueForPeriod(inv, start, end);
@@ -187,7 +258,7 @@ export default function Reports() {
         });
 
         filteredExpenses.forEach((ex) => {
-          const mKey = format(new Date(ex.date), 'MMMM yyyy');
+          const mKey = format(new Date(ex.date || Date.now()), 'MMMM yyyy');
           if (!pnlMonthly[mKey]) pnlMonthly[mKey] = { revenue: 0, expenses: 0 };
           pnlMonthly[mKey].expenses += (Number(ex.amount) || 0);
         });
@@ -347,7 +418,7 @@ export default function Reports() {
     docPdf.text(`Contact: ${settings.phone} | Address: ${settings.address}`, 14, 26);
 
     // 3. Document Title
-    const formattedReportType = reportType.charAt(0).toUpperCase() + reportType.slice(1) + ' Report';
+    const formattedReportType = reportType === 'sales' ? 'Sales Report' : (reportType.charAt(0).toUpperCase() + reportType.slice(1) + ' Report');
     docPdf.setFontSize(14);
     docPdf.setFont('Helvetica', 'bold');
     docPdf.setTextColor(0, 51, 102);
@@ -367,14 +438,14 @@ export default function Reports() {
 
     docPdf.setFontSize(8);
     docPdf.setTextColor(100, 100, 100);
-    docPdf.text('TOTAL REVENUE', 20, 60);
+    docPdf.text(reportType === 'sales' ? 'TOTAL SALES' : 'TOTAL REVENUE', 20, 60);
     docPdf.text('TOTAL EXPENSES', 80, 60);
-    docPdf.text('NET PROFIT/LOSS', 140, 60);
+    docPdf.text(reportType === 'sales' ? 'NET MARGIN' : 'NET PROFIT/LOSS', 140, 60);
 
     docPdf.setFontSize(11);
     docPdf.setFont('Helvetica', 'bold');
     docPdf.setTextColor(16, 185, 129); // green
-    docPdf.text(formatCurrency(summary.revenue), 20, 67);
+    docPdf.text(formatCurrency(reportType === 'sales' ? summary.sales : summary.revenue), 20, 67);
     docPdf.setTextColor(239, 68, 68); // red
     docPdf.text(formatCurrency(summary.expenses), 80, 67);
     docPdf.setTextColor(summary.profit >= 0 ? 16 : 239, summary.profit >= 0 ? 185 : 68, summary.profit >= 0 ? 129 : 68);
@@ -382,7 +453,8 @@ export default function Reports() {
 
     // 5. Table setup
     let headers = [];
-    if (reportType === 'revenue') headers = [['Invoice #', 'Customer', 'Date', 'Total Amount', 'Amount Paid', 'Status']];
+    if (reportType === 'sales') headers = [['Bill #', 'Customer', 'Date', 'Items', 'Total Amount', 'Status']];
+    else if (reportType === 'revenue') headers = [['Invoice #', 'Customer', 'Date', 'Total Amount', 'Amount Paid', 'Status']];
     else if (reportType === 'expense') headers = [['Date', 'Category', 'Description', 'Vendor', 'Method', 'Amount']];
     else if (reportType === 'pnl') headers = [['Period/Month', 'Revenue', 'Expenses', 'Net Profit/Loss', 'Remarks']];
     else if (reportType === 'salary') headers = [['Staff Name', 'Month', 'Date Paid', 'Notes', 'Amount']];
@@ -406,7 +478,6 @@ export default function Reports() {
     });
 
     // 6. Draw Footer
-    const finalY = docPdf.lastAutoTable.finalY + 20;
     docPdf.setFontSize(8);
     docPdf.setFont('Helvetica', 'normal');
     docPdf.setTextColor(150, 150, 150);
@@ -421,7 +492,8 @@ export default function Reports() {
 
   // Preview Headers list
   let previewHeaders = [];
-  if (reportType === 'revenue') previewHeaders = ['Invoice #', 'Customer', 'Date', 'Total', 'Paid', 'Status'];
+  if (reportType === 'sales') previewHeaders = ['Bill #', 'Customer', 'Date', 'Items', 'Total', 'Status'];
+  else if (reportType === 'revenue') previewHeaders = ['Invoice #', 'Customer', 'Date', 'Total', 'Paid', 'Status'];
   else if (reportType === 'expense') previewHeaders = ['Date', 'Category', 'Description', 'Vendor', 'Method', 'Amount'];
   else if (reportType === 'pnl') previewHeaders = ['Period/Month', 'Revenue', 'Expenses', 'Net P&L', 'Remarks'];
   else if (reportType === 'salary') previewHeaders = ['Staff Name', 'Month', 'Date Paid', 'Notes', 'Amount'];
@@ -429,82 +501,328 @@ export default function Reports() {
   else if (reportType === 'customer') previewHeaders = ['Customer Name', 'Total Sales', 'Payments Received', 'Outstanding'];
   else if (reportType === 'service') previewHeaders = ['Service Item', 'Volume Billed', 'Sales Revenue'];
 
+  const renderTableCell = (val, colKey) => {
+    if (val === undefined || val === '') return null;
+    const badgeColors = {
+      'PAID': 'badge-active',
+      'NET SURPLUS': 'badge-active',
+      'INVOICED': 'badge-active',
+      'PARTIAL': 'badge-warning',
+      'PENDING': 'badge-warning',
+      'UNPAID': 'badge-inactive',
+      'NET DEFICIT': 'badge-inactive',
+    };
+    const isBadge = val in badgeColors;
+    return (
+      <td key={colKey} style={colKey === 'col1' ? { fontWeight: 600 } : {}}>
+        {isBadge ? (
+          <span className={`badge ${badgeColors[val]}`} style={{ fontSize: '0.65rem', padding: '2px 8px' }}>
+            {val}
+          </span>
+        ) : (
+          val
+        )}
+      </td>
+    );
+  };
+
+  const renderMobileCard = (row, idx) => {
+    switch (reportType) {
+      case 'sales':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', flexDirection: 'column', gap: '8px', margin: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col1}
+              </span>
+              <span className={`badge ${
+                row.col6 === 'INVOICED' ? 'badge-active' : 'badge-warning'
+              }`} style={{ fontSize: '0.62rem', padding: '2px 6px' }}>
+                {row.col6}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+              <span>Customer: <strong>{row.col2}</strong></span>
+              <span>{row.col3}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', borderTop: '1px dashed var(--border-light)', paddingTop: '6px', marginTop: '2px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Items: <strong style={{ color: 'var(--text-primary)' }}>{row.col4}</strong></span>
+              <span style={{ color: 'var(--text-muted)' }}>Total: <strong style={{ color: 'var(--primary)' }}>{row.col5}</strong></span>
+            </div>
+          </div>
+        );
+      case 'revenue':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', flexDirection: 'column', gap: '8px', margin: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col1}
+              </span>
+              <span className={`badge ${
+                row.col6 === 'PAID' ? 'badge-active' : 
+                row.col6 === 'PARTIAL' ? 'badge-warning' : 'badge-inactive'
+              }`} style={{ fontSize: '0.62rem', padding: '2px 6px' }}>
+                {row.col6}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+              <span>Customer: <strong>{row.col2}</strong></span>
+              <span>{row.col3}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', borderTop: '1px dashed var(--border-light)', paddingTop: '6px', marginTop: '2px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>Total: <strong style={{ color: 'var(--text-primary)' }}>{row.col4}</strong></span>
+              <span style={{ color: 'var(--text-muted)' }}>Paid: <strong style={{ color: 'var(--success)' }}>{row.col5}</strong></span>
+            </div>
+          </div>
+        );
+      case 'expense':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', flexDirection: 'column', gap: '6px', margin: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <span className="badge" style={{ background: 'rgba(239, 68, 68, 0.06)', color: '#ef4444', fontSize: '0.65rem', padding: '2px 6px', fontWeight: 700 }}>
+                  {row.col2}
+                </span>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '4px' }}>
+                  {row.col3}
+                </div>
+              </div>
+              <span style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--danger)' }}>
+                {row.col6}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', borderTop: '1px solid rgba(0, 61, 130, 0.02)', paddingTop: '6px' }}>
+              <span>Vendor: <strong>{row.col4}</strong></span>
+              <span>Method: <strong>{row.col5}</strong></span>
+              <span>{row.col1}</span>
+            </div>
+          </div>
+        );
+      case 'pnl':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', flexDirection: 'column', gap: '8px', margin: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col1}
+              </span>
+              <span className={`badge ${row.col5 === 'NET SURPLUS' ? 'badge-active' : 'badge-inactive'}`} style={{ fontSize: '0.62rem', padding: '2px 6px' }}>
+                {row.col5}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.74rem', borderTop: '1px dashed var(--border-light)', paddingTop: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span className="text-muted" style={{ fontSize: '0.62rem' }}>Revenue</span>
+                <span style={{ fontWeight: 700, color: 'var(--success)' }}>{row.col2}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span className="text-muted" style={{ fontSize: '0.62rem' }}>Expenses</span>
+                <span style={{ fontWeight: 700, color: 'var(--danger)' }}>{row.col3}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'right' }}>
+                <span className="text-muted" style={{ fontSize: '0.62rem' }}>Net P&L</span>
+                <span style={{ fontWeight: 800, color: row.col5 === 'NET SURPLUS' ? 'var(--success)' : 'var(--danger)' }}>{row.col4}</span>
+              </div>
+            </div>
+          </div>
+        );
+      case 'salary':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', flexDirection: 'column', gap: '6px', margin: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col1}
+              </span>
+              <span style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--primary)' }}>
+                {row.col5}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+              <span>Salary for: <strong>{row.col2}</strong></span>
+              <span>Paid on: <strong>{row.col3}</strong></span>
+            </div>
+            {row.col4 && row.col4 !== '—' && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', background: 'var(--surface-overlay)', padding: '6px 8px', borderRadius: '6px', marginTop: '4px' }}>
+                {row.col4}
+              </div>
+            )}
+          </div>
+        );
+      case 'category':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
+            <div>
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col1}
+              </span>
+              <div className="text-muted" style={{ fontSize: '0.68rem', marginTop: '2px' }}>
+                Share of total expenses
+              </div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col2}
+              </span>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--primary)', marginTop: '2px' }}>
+                {row.col3}
+              </div>
+            </div>
+          </div>
+        );
+      case 'customer':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', flexDirection: 'column', gap: '8px', margin: 0 }}>
+            <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+              {row.col1}
+            </span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', fontSize: '0.74rem', borderTop: '1px dashed var(--border-light)', paddingTop: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span className="text-muted" style={{ fontSize: '0.62rem' }}>Total Sales</span>
+                <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>{row.col2}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span className="text-muted" style={{ fontSize: '0.62rem' }}>Paid</span>
+                <span style={{ fontWeight: 700, color: 'var(--success)' }}>{row.col3}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'right' }}>
+                <span className="text-muted" style={{ fontSize: '0.62rem' }}>Outstanding</span>
+                <span style={{ fontWeight: 700, color: row.col4 !== '₹0' && row.col4 !== '₹0.00' ? 'var(--danger)' : 'var(--text-light)' }}>{row.col4}</span>
+              </div>
+            </div>
+          </div>
+        );
+      case 'service':
+        return (
+          <div key={idx} className="list-card" style={{ padding: '12px 14px', background: '#ffffff', borderRadius: '16px', border: '1px solid rgba(0, 61, 130, 0.04)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
+            <div>
+              <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {row.col1}
+              </span>
+              <div className="text-muted" style={{ fontSize: '0.68rem', marginTop: '2px' }}>
+                Volume Billed: <strong>{row.col2}</strong>
+              </div>
+            </div>
+            <span style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+              {row.col3}
+            </span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
+      
+      {/* CSS overrides for desktop vs mobile preview tables */}
+      <style>{`
+        .desktop-only-table { display: block; }
+        .mobile-only-cards { display: none; }
+        @media (max-width: 767px) {
+          .desktop-only-table { display: none !important; }
+          .mobile-only-cards { display: flex !important; flex-direction: column; gap: 10px; padding: 12px; }
+        }
+      `}</style>
+
       {/* Title Header */}
-      <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
-          <h2 className="card-title" style={{ border: 'none', margin: 0 }}>Business Reports</h2>
-          <p className="text-muted" style={{ fontSize: '0.82rem' }}>Analyze sales margins, operational costs, employee payroll, and service metrics</p>
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Business Reports</h2>
+          <p className="text-muted" style={{ fontSize: '0.74rem', marginTop: '2px', margin: 0 }}>Analyze sales margins, operations, payroll, and service metrics</p>
         </div>
         <button 
           onClick={handleExportPDF} 
           disabled={reportData.length === 0 || loading} 
           className="btn btn-primary"
-          style={{ gap: '8px' }}
+          style={{ padding: '8px 16px', fontSize: '0.78rem', minHeight: '34px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
         >
-          <Download size={16} /> Export PDF Report
+          <Download size={14} /> Export PDF Report
         </button>
       </div>
 
-      {/* Select Report Type Cards Grid */}
-      <div className="dashboard-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginBottom: '4px' }}>
-        <button className={`btn ${reportType === 'revenue' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('revenue')}>
-          Revenue Report
-        </button>
-        <button className={`btn ${reportType === 'expense' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('expense')}>
-          Expense Report
-        </button>
-        <button className={`btn ${reportType === 'pnl' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('pnl')}>
-          Profit & Loss (P&L)
-        </button>
-        <button className={`btn ${reportType === 'salary' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('salary')}>
-          Staff Salary
-        </button>
-        <button className={`btn ${reportType === 'category' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('category')}>
-          Expense Category
-        </button>
-        <button className={`btn ${reportType === 'customer' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('customer')}>
-          Customer Sales
-        </button>
-        <button className={`btn ${reportType === 'service' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '12px 6px', fontSize: '0.8rem' }} onClick={() => setReportType('service')}>
-          Service Sales
-        </button>
+      {/* Modern Horizontally Scrollable Report Type Selector */}
+      <div 
+        className="report-types-scroll hide-scrollbar"
+        style={{ 
+          display: 'flex', 
+          gap: '6px', 
+          overflowX: 'auto', 
+          paddingBottom: '4px',
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {reportTypes.map((t) => {
+          const Icon = t.icon;
+          const isActive = reportType === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => {
+                setReportType(t.id);
+                setSelectedCustomer('all');
+                setSelectedEmployee('all');
+                setSelectedCategory('all');
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: '20px',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                border: '1.5px solid',
+                borderColor: isActive ? 'rgba(0, 82, 204, 0.18)' : 'var(--border-light)',
+                background: isActive ? 'rgba(0, 82, 204, 0.05)' : '#ffffff',
+                color: isActive ? 'var(--primary)' : 'var(--text-secondary)',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+                transition: 'all var(--t-base)'
+              }}
+            >
+              <Icon size={13} style={{ color: isActive ? t.color : 'var(--text-light)' }} />
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Advanced Filter Criteria Section */}
-      <div className="filters-section" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
+      <div className="filters-section" style={{ margin: 0 }}>
         <div className="filter-item">
-          <label htmlFor="rep-from">From Date</label>
+          <label className="filter-label" htmlFor="rep-from">From Date</label>
           <input
             id="rep-from"
             type="date"
             value={fromDate}
             onChange={e => setFromDate(e.target.value)}
             className="form-control"
+            style={{ fontSize: '0.8rem', height: '36px' }}
           />
         </div>
 
         <div className="filter-item">
-          <label htmlFor="rep-to">To Date</label>
+          <label className="filter-label" htmlFor="rep-to">To Date</label>
           <input
             id="rep-to"
             type="date"
             value={toDate}
             onChange={e => setToDate(e.target.value)}
             className="form-control"
+            style={{ fontSize: '0.8rem', height: '36px' }}
           />
         </div>
 
         {/* Dynamic Context Filters */}
-        {reportType === 'revenue' && (
-          <div className="filter-item">
-            <label htmlFor="rep-cust">Customer</label>
+        {(reportType === 'revenue' || reportType === 'sales') && (
+          <div className="filter-item" style={{ gridColumn: 'span 2' }}>
+            <label className="filter-label" htmlFor="rep-cust">Customer</label>
             <select
               id="rep-cust"
               value={selectedCustomer}
               onChange={e => setSelectedCustomer(e.target.value)}
               className="form-control"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             >
               <option value="all">All Customers</option>
               {customers.map(c => (
@@ -515,13 +833,14 @@ export default function Reports() {
         )}
 
         {reportType === 'expense' && (
-          <div className="filter-item">
-            <label htmlFor="rep-cat">Expense Category</label>
+          <div className="filter-item" style={{ gridColumn: 'span 2' }}>
+            <label className="filter-label" htmlFor="rep-cat">Expense Category</label>
             <select
               id="rep-cat"
               value={selectedCategory}
               onChange={e => setSelectedCategory(e.target.value)}
               className="form-control"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             >
               <option value="all">All Categories</option>
               {categories.map(cat => (
@@ -532,13 +851,14 @@ export default function Reports() {
         )}
 
         {reportType === 'salary' && (
-          <div className="filter-item">
-            <label htmlFor="rep-emp">Employee</label>
+          <div className="filter-item" style={{ gridColumn: 'span 2' }}>
+            <label className="filter-label" htmlFor="rep-emp">Employee</label>
             <select
               id="rep-emp"
               value={selectedEmployee}
               onChange={e => setSelectedEmployee(e.target.value)}
               className="form-control"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             >
               <option value="all">All Staff</option>
               {employees.map(emp => (
@@ -550,90 +870,88 @@ export default function Reports() {
       </div>
 
       {/* Aggregate Report Summary Cards */}
-      <div className="dashboard-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))', gap: '8px' }}>
         
         {/* Total revenue summary */}
-        <div className="card" style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', borderLeft: '4px solid var(--success)', margin: 0 }}>
-          <span className="text-muted" style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <TrendingUp size={14} className="text-success" /> Total Revenue
+        <div className="card" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', borderLeft: '3px solid var(--success)', margin: 0 }}>
+          <span className="text-muted" style={{ fontSize: '0.66rem', display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <TrendingUp size={11} className="text-success" /> {reportType === 'sales' ? 'Sales' : 'Revenue'}
           </span>
-          <strong style={{ fontSize: '1.4rem', color: 'var(--text)', marginTop: '4px' }}>
-            {formatCurrency(summary.revenue)}
+          <strong style={{ fontSize: '1.05rem', color: 'var(--text-primary)', marginTop: '2px' }}>
+            {formatCurrency(reportType === 'sales' ? (summary.sales || 0) : (summary.revenue || 0)).replace(/\.00$/, '')}
           </strong>
         </div>
 
         {/* Total expenses summary */}
-        <div className="card" style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', borderLeft: '4px solid var(--danger)', margin: 0 }}>
-          <span className="text-muted" style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <TrendingDown size={14} className="text-danger" /> Total Expenses
+        <div className="card" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', borderLeft: '3px solid var(--danger)', margin: 0 }}>
+          <span className="text-muted" style={{ fontSize: '0.66rem', display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <TrendingDown size={11} className="text-danger" /> Expenses
           </span>
-          <strong style={{ fontSize: '1.4rem', color: 'var(--text)', marginTop: '4px' }}>
-            {formatCurrency(summary.expenses)}
+          <strong style={{ fontSize: '1.05rem', color: 'var(--text-primary)', marginTop: '2px' }}>
+            {formatCurrency(summary.expenses || 0).replace(/\.00$/, '')}
           </strong>
         </div>
 
         {/* Total net surplus summary */}
-        <div className="card" style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', borderLeft: `4px solid ${summary.profit >= 0 ? 'var(--success)' : 'var(--danger)'}`, margin: 0 }}>
-          <span className="text-muted" style={{ fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <DollarSign size={14} style={{ color: summary.profit >= 0 ? 'var(--success)' : 'var(--danger)' }} /> Net Balance Surplus
+        <div className="card" style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', borderLeft: `3px solid ${summary.profit >= 0 ? 'var(--success)' : 'var(--danger)'}`, margin: 0 }}>
+          <span className="text-muted" style={{ fontSize: '0.66rem', display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <DollarSign size={11} style={{ color: summary.profit >= 0 ? 'var(--success)' : 'var(--danger)' }} /> {reportType === 'sales' ? 'Net Margin' : 'Net Balance'}
           </span>
-          <strong style={{ fontSize: '1.4rem', color: summary.profit >= 0 ? 'var(--success)' : 'var(--danger)', marginTop: '4px' }}>
-            {formatCurrency(summary.profit)}
+          <strong style={{ fontSize: '1.05rem', color: summary.profit >= 0 ? 'var(--success)' : 'var(--danger)', marginTop: '2px' }}>
+            {formatCurrency(summary.profit || 0).replace(/\.00$/, '')}
           </strong>
         </div>
       </div>
 
-      {/* Dynamic Tabular Preview Area */}
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontWeight: 700, fontSize: '0.92rem', color: 'var(--primary)' }}>
-            On-Screen Preview ({reportData.length} records found)
+      {/* Dynamic Preview Area */}
+      <div className="card" style={{ padding: 0, margin: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontWeight: 800, fontSize: '0.8rem', color: 'var(--text-primary)' }}>
+            Report Preview ({reportData.length} records)
           </span>
-          <button onClick={generateReport} className="btn-icon" style={{ minWidth: 0, minHeight: 0, padding: '4px' }} title="Reload Report">
-            <RefreshCw size={14} />
+          <button onClick={generateReport} className="btn-icon" style={{ minWidth: 0, minHeight: 0, padding: '4px', background: 'rgba(0,0,0,0.03)', borderRadius: '6px' }} title="Reload Report">
+            <RefreshCw size={12} />
           </button>
         </div>
 
         {loading ? (
           <div style={{ padding: '24px' }}>
             <div className="loading-pulse">
-              <div className="loading-pulse__bar" style={{ width: '40%' }} />
+              <div className="loading-pulse__bar" style={{ width: '45%' }} />
               <div className="loading-pulse__bar" />
             </div>
           </div>
         ) : reportData.length > 0 ? (
-          <div className="table-responsive" style={{ margin: 0, borderRadius: '0 0 var(--radius-md) var(--radius-md)' }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  {previewHeaders.map(h => <th key={h}>{h}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {reportData.map((row, idx) => (
-                  <tr key={idx}>
-                    <td style={{ fontWeight: 600 }}>{row.col1}</td>
-                    {row.col2 !== undefined && row.col2 !== '' && <td>{row.col2}</td>}
-                    {row.col3 !== undefined && row.col3 !== '' && <td>{row.col3}</td>}
-                    {row.col4 !== undefined && row.col4 !== '' && <td style={{ maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.col4}</td>}
-                    {row.col5 !== undefined && row.col5 !== '' && <td>{row.col5}</td>}
-                    {row.col6 !== undefined && row.col6 !== '' && (
-                      <td>
-                        <span className={`badge ${
-                          row.col6 === 'PAID' || row.col6 === 'NET SURPLUS' ? 'badge-active' : 
-                          row.col6 === 'PARTIAL' ? 'badge-warning' : 'badge-inactive'
-                        }`}>
-                          {row.col6}
-                        </span>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {/* Desktop Table View */}
+            <div className="desktop-only-table">
+              <div className="table-responsive" style={{ margin: 0, borderRadius: '0' }}>
+                <table className="table" style={{ fontSize: '0.78rem' }}>
+                  <thead>
+                    <tr>
+                      {previewHeaders.map(h => <th key={h} style={{ fontSize: '0.74rem', padding: '10px 12px' }}>{h}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.map((row, idx) => (
+                      <tr key={idx}>
+                        {['col1', 'col2', 'col3', 'col4', 'col5', 'col6'].map(colKey => 
+                          renderTableCell(row[colKey], colKey)
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Mobile Card Feed List View */}
+            <div className="mobile-only-cards">
+              {reportData.map((row, idx) => renderMobileCard(row, idx))}
+            </div>
+          </>
         ) : (
-          <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-light)', fontSize: '0.85rem' }}>
+          <div style={{ textAlign: 'center', padding: '36px 16px', color: 'var(--text-light)', fontSize: '0.8rem' }}>
             No records matched the filter criteria in this period.
           </div>
         )}

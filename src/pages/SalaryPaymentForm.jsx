@@ -36,7 +36,6 @@ export default function SalaryPaymentForm() {
     setIsOfflineError(false);
 
     try {
-      // Fetch only active employees
       const q = query(collection(db, 'employees'), where('status', '==', 'active'));
       const snap = await getDocs(q);
       const list = [];
@@ -107,7 +106,6 @@ export default function SalaryPaymentForm() {
       const salaryRef = doc(collection(db, 'salary_payments'));
       const expenseRef = doc(collection(db, 'expenses'));
 
-      // Create salary payment document
       const salaryPaymentObj = {
         id: salaryRef.id,
         employeeId: formData.employeeId,
@@ -116,12 +114,10 @@ export default function SalaryPaymentForm() {
         amount: payAmount,
         paymentDate: formData.paymentDate,
         notes: formData.notes,
-        expenseId: expenseRef.id, // reference to corresponding expense
+        expenseId: expenseRef.id, 
         createdAt: new Date().toISOString()
       };
 
-      // Create corresponding expense document (links back to salaryPaymentId)
-      // Format month string (e.g. '2026-05' to 'May 2026') for cleaner descriptions
       const [year, month] = formData.salaryMonth.split('-');
       const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const formattedMonth = `${monthNames[parseInt(month, 10) - 1]} ${year}`;
@@ -135,15 +131,13 @@ export default function SalaryPaymentForm() {
         vendor: `Employee: ${formData.employeeName}`,
         paymentMethod: 'Cash',
         notes: formData.notes,
-        salaryPaymentId: salaryRef.id, // links back
+        salaryPaymentId: salaryRef.id, 
         createdAt: new Date().toISOString()
       };
 
-      // Write both documents to Firestore
       await setDoc(salaryRef, salaryPaymentObj);
       await setDoc(expenseRef, expenseObj);
 
-      // Redirect back to employees with salary history tab hint
       navigate('/employees?tab=salaries');
 
     } catch (err) {
@@ -165,7 +159,7 @@ export default function SalaryPaymentForm() {
 
   if (!dataReady) {
     return (
-      <div className="card">
+      <div className="card" style={{ display: 'flex', justifyContent: 'center', padding: '40px 20px' }}>
         <div className="loading-pulse">
           <div className="loading-pulse__bar" style={{ width: '40%' }} />
           <div className="loading-pulse__bar" />
@@ -176,26 +170,34 @@ export default function SalaryPaymentForm() {
   }
 
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-      {/* Back Link */}
-      <div className="mb-2">
-        <button className="btn btn-secondary" onClick={() => navigate('/employees?tab=salaries')}>
-          <ArrowLeft size={16} /> Back to Staff
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
+      {/* Back button header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button 
+          type="button" 
+          onClick={() => navigate('/employees?tab=salaries')} 
+          style={{ background: 'rgba(0,0,0,0.03)', border: 'none', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-primary)' }}
+        >
+          <ArrowLeft size={16} />
         </button>
+        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0, border: 'none' }}>
+          Record Salary Payment
+        </h2>
       </div>
 
-      <div className="card">
-        <h2 className="card-title" style={{ paddingBottom: '12px' }}>Record Salary Payment</h2>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
-          <div className="form-group">
-            <label htmlFor="sal-employee">Select Employee <span style={{ color: 'var(--danger)' }}>*</span></label>
+          {/* Active Employee Selector */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="sal-employee">Select Employee</label>
             <select
               id="sal-employee"
               value={formData.employeeId}
               onChange={handleEmployeeChange}
               required
               className="form-control"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             >
               <option value="">-- Choose Active Employee --</option>
               {employees.map(emp => (
@@ -206,9 +208,10 @@ export default function SalaryPaymentForm() {
             </select>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div className="form-group">
-              <label htmlFor="sal-month">Salary Month <span style={{ color: 'var(--danger)' }}>*</span></label>
+          {/* Month & Payment Date Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="sal-month">Salary Month</label>
               <input
                 id="sal-month"
                 type="month"
@@ -217,11 +220,12 @@ export default function SalaryPaymentForm() {
                 onChange={handleChange}
                 required
                 className="form-control"
+                style={{ fontSize: '0.8rem', height: '36px' }}
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="sal-date">Payment Date <span style={{ color: 'var(--danger)' }}>*</span></label>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="sal-date">Payment Date</label>
               <input
                 id="sal-date"
                 type="date"
@@ -230,12 +234,14 @@ export default function SalaryPaymentForm() {
                 onChange={handleChange}
                 required
                 className="form-control"
+                style={{ fontSize: '0.8rem', height: '36px' }}
               />
             </div>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="sal-amount">Amount (₹) <span style={{ color: 'var(--danger)' }}>*</span></label>
+          {/* Payout Amount */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="sal-amount">Amount (₹)</label>
             <input
               id="sal-amount"
               type="number"
@@ -246,11 +252,13 @@ export default function SalaryPaymentForm() {
               className="form-control"
               placeholder="Enter salary payment amount"
               min="0"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="sal-notes">Payment Notes</label>
+          {/* Notes */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="sal-notes">Payment Notes</label>
             <textarea
               id="sal-notes"
               name="notes"
@@ -258,19 +266,28 @@ export default function SalaryPaymentForm() {
               onChange={handleChange}
               className="form-control"
               placeholder="Payment method details, transaction reference, bonuses/deductions, etc."
-              rows={3}
-              style={{ fontFamily: 'inherit', resize: 'vertical' }}
+              rows={2}
+              style={{ fontSize: '0.8rem', padding: '8px 10px', minHeight: '50px' }}
             />
           </div>
 
-          <div style={{ marginTop: '8px' }}>
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+            <button
+              type="button"
+              onClick={() => navigate('/employees?tab=salaries')}
+              className="btn btn-secondary"
+              style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px' }}
+            >
+              Cancel
+            </button>
             <button
               type="submit"
               disabled={loading || !formData.employeeId}
-              className="btn btn-primary btn-mobile-full"
-              style={{ gap: '8px' }}
+              className="btn btn-primary"
+              style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              <Save size={18} />
+              <Save size={14} />
               {loading ? 'Recording...' : 'Record Payment'}
             </button>
           </div>

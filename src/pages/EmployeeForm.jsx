@@ -131,13 +131,11 @@ export default function EmployeeForm() {
 
     try {
       if (id) {
-        // Edit existing
         await setDoc(doc(db, 'employees', id), {
           ...formData,
           monthlySalary: salary
         });
       } else {
-        // Create new
         const customId = await generateEmployeeId();
         await setDoc(doc(db, 'employees', customId), {
           ...formData,
@@ -165,7 +163,7 @@ export default function EmployeeForm() {
 
   if (!dataReady) {
     return (
-      <div className="card">
+      <div className="card" style={{ display: 'flex', justifyContent: 'center', padding: '40px 20px' }}>
         <div className="loading-pulse">
           <div className="loading-pulse__bar" style={{ width: '40%' }} />
           <div className="loading-pulse__bar" />
@@ -176,22 +174,27 @@ export default function EmployeeForm() {
   }
 
   return (
-    <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-      {/* Back button */}
-      <div className="mb-2">
-        <button className="btn btn-secondary" onClick={() => navigate('/employees')}>
-          <ArrowLeft size={16} /> Back to Employees
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
+      {/* Back button header wrapper */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button 
+          type="button" 
+          onClick={() => navigate('/employees')} 
+          style={{ background: 'rgba(0,0,0,0.03)', border: 'none', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-primary)' }}
+        >
+          <ArrowLeft size={16} />
         </button>
-      </div>
-
-      <div className="card">
-        <h2 className="card-title" style={{ paddingBottom: '12px' }}>
+        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0, border: 'none' }}>
           {id ? `Edit Staff: ${formData.employeeId}` : 'Add New Employee'}
         </h2>
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      </div>
+
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           
-          <div className="form-group">
-            <label htmlFor="emp-name">Full Name <span style={{ color: 'var(--danger)' }}>*</span></label>
+          {/* Name */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="emp-name">Full Name</label>
             <input
               id="emp-name"
               type="text"
@@ -201,12 +204,14 @@ export default function EmployeeForm() {
               required
               className="form-control"
               placeholder="e.g. Ramesh Kumar"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             />
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div className="form-group">
-              <label htmlFor="emp-phone">Phone Number</label>
+          {/* Phone & Designation Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="emp-phone">Phone Number</label>
               <input
                 id="emp-phone"
                 type="tel"
@@ -216,11 +221,12 @@ export default function EmployeeForm() {
                 className="form-control"
                 placeholder="+91 XXXXXXXXXX"
                 inputMode="numeric"
+                style={{ fontSize: '0.8rem', height: '36px' }}
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="emp-designation">Designation <span style={{ color: 'var(--danger)' }}>*</span></label>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="emp-designation">Designation</label>
               <select
                 id="emp-designation"
                 name="designation"
@@ -228,6 +234,7 @@ export default function EmployeeForm() {
                 onChange={handleChange}
                 required
                 className="form-control"
+                style={{ fontSize: '0.8rem', height: '36px' }}
               >
                 <option value="Laundry Staff">Laundry Staff</option>
                 <option value="Ironing Staff">Ironing Staff</option>
@@ -240,9 +247,10 @@ export default function EmployeeForm() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <div className="form-group">
-              <label htmlFor="emp-salary">Monthly Salary (₹) <span style={{ color: 'var(--danger)' }}>*</span></label>
+          {/* Salary & Joining Date Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="emp-salary">Monthly Salary (₹)</label>
               <input
                 id="emp-salary"
                 type="number"
@@ -253,11 +261,12 @@ export default function EmployeeForm() {
                 className="form-control"
                 placeholder="e.g. 15000"
                 min="0"
+                style={{ fontSize: '0.8rem', height: '36px' }}
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="emp-joining">Joining Date <span style={{ color: 'var(--danger)' }}>*</span></label>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="emp-joining">Joining Date</label>
               <input
                 id="emp-joining"
                 type="date"
@@ -266,12 +275,14 @@ export default function EmployeeForm() {
                 onChange={handleChange}
                 required
                 className="form-control"
+                style={{ fontSize: '0.8rem', height: '36px' }}
               />
             </div>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="emp-address">Residential Address</label>
+          {/* Residential Address */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="emp-address">Residential Address</label>
             <textarea
               id="emp-address"
               name="address"
@@ -279,27 +290,30 @@ export default function EmployeeForm() {
               onChange={handleChange}
               className="form-control"
               placeholder="Enter full street address"
-              rows={3}
-              style={{ fontFamily: 'inherit', resize: 'vertical' }}
+              rows={2}
+              style={{ fontSize: '0.8rem', padding: '8px 10px', minHeight: '50px' }}
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="emp-status">Employment Status <span style={{ color: 'var(--danger)' }}>*</span></label>
+          {/* Status */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="emp-status">Employment Status</label>
             <select
               id="emp-status"
               name="status"
               value={formData.status}
               onChange={handleChange}
               className="form-control"
+              style={{ fontSize: '0.8rem', height: '36px' }}
             >
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
             </select>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="emp-notes">Administrative Notes</label>
+          {/* Administrative Notes */}
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="emp-notes">Administrative Notes</label>
             <textarea
               id="emp-notes"
               name="notes"
@@ -308,18 +322,27 @@ export default function EmployeeForm() {
               className="form-control"
               placeholder="Payment terms, special constraints, emergency contacts, etc."
               rows={2}
-              style={{ fontFamily: 'inherit', resize: 'vertical' }}
+              style={{ fontSize: '0.8rem', padding: '8px 10px', minHeight: '50px' }}
             />
           </div>
 
-          <div style={{ marginTop: '8px' }}>
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+            <button
+              type="button"
+              onClick={() => navigate('/employees')}
+              className="btn btn-secondary"
+              style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px' }}
+            >
+              Cancel
+            </button>
             <button
               type="submit"
               disabled={loading}
-              className="btn btn-primary btn-mobile-full"
-              style={{ gap: '8px' }}
+              className="btn btn-primary"
+              style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              <Save size={18} />
+              <Save size={14} />
               {loading ? 'Saving...' : 'Save Employee'}
             </button>
           </div>

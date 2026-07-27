@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 import { formatCurrency } from '../utils/currencyFormatter';
+import { Search, X, Check, ArrowLeft } from 'lucide-react';
 
 export default function CustomerForm() {
   const { id } = useParams();
@@ -15,6 +16,7 @@ export default function CustomerForm() {
   const [services, setServices] = useState([]);
   const [dataReady, setDataReady] = useState(false);
   const [isOfflineError, setIsOfflineError] = useState(false);
+  const [serviceSearch, setServiceSearch] = useState('');
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
@@ -81,7 +83,6 @@ export default function CustomerForm() {
     }
   };
 
-  // Auto-reload on reconnect
   useEffect(() => {
     if (isOnline && wasOffline) loadData();
   }, [isOnline, wasOffline, loadData]);
@@ -160,7 +161,7 @@ export default function CustomerForm() {
 
   if (!dataReady) {
     return (
-      <div className="card">
+      <div className="card" style={{ display: 'flex', justifyContent: 'center', padding: '40px 20px' }}>
         <div className="loading-pulse">
           <div className="loading-pulse__bar" style={{ width: '40%' }} />
           <div className="loading-pulse__bar" />
@@ -170,14 +171,31 @@ export default function CustomerForm() {
     );
   }
 
-  return (
-    <div className="card">
-      <h2 className="card-title">{id ? 'Edit Customer' : 'Add New Customer'}</h2>
-      <form onSubmit={handleSubmit}>
+  // Filter services by custom pricing search term
+  const filteredServices = services.filter(svc => 
+    svc.name.toLowerCase().includes(serviceSearch.toLowerCase())
+  );
 
-        {/* ── Basic Info ─────────────────────────────── */}
-        <div className="form-group">
-          <label htmlFor="cust-name">Name</label>
+  return (
+    <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+        <button 
+          type="button" 
+          onClick={() => navigate('/customers')} 
+          style={{ background: 'rgba(0,0,0,0.03)', border: 'none', width: '32px', height: '32px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-primary)' }}
+        >
+          <ArrowLeft size={16} />
+        </button>
+        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0, border: 'none' }}>
+          {id ? 'Edit Customer Info' : 'Add New Customer'}
+        </h2>
+      </div>
+
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        
+        {/* Name */}
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="filter-label" htmlFor="cust-name">Full Name</label>
           <input
             id="cust-name"
             type="text"
@@ -187,10 +205,14 @@ export default function CustomerForm() {
             required
             className="form-control"
             autoComplete="name"
+            style={{ fontSize: '0.8rem', height: '36px' }}
+            placeholder="e.g. Ramesh Kumar"
           />
         </div>
-        <div className="form-group">
-          <label htmlFor="cust-phone">Phone (Optional)</label>
+
+        {/* Phone */}
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="filter-label" htmlFor="cust-phone">Phone Number (Optional)</label>
           <input
             id="cust-phone"
             type="tel"
@@ -202,10 +224,13 @@ export default function CustomerForm() {
             autoComplete="tel"
             placeholder="+91 "
             maxLength="14"
+            style={{ fontSize: '0.8rem', height: '36px' }}
           />
         </div>
-        <div className="form-group">
-          <label htmlFor="cust-address">Address</label>
+
+        {/* Address */}
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="filter-label" htmlFor="cust-address">Delivery Address</label>
           <textarea
             id="cust-address"
             name="address"
@@ -213,35 +238,69 @@ export default function CustomerForm() {
             onChange={handleChange}
             required
             className="form-control"
-            rows="3"
+            rows="2"
+            style={{ fontSize: '0.8rem', padding: '8px 10px', minHeight: '60px' }}
+            placeholder="e.g. Flat 302, Green Meadows Apartment"
           />
         </div>
 
-        {/* ── Custom Pricing ─────────────────────────── */}
-        <div style={{ marginTop: '16px', marginBottom: '8px' }}>
-          <h3 style={{ color: 'var(--primary)', fontSize: '1rem', marginBottom: '4px' }}>
-            Custom Pricing
+        {/* Custom Pricing Divider */}
+        <div style={{ marginTop: '4px', borderTop: '1px solid rgba(0, 61, 130, 0.04)', paddingTop: '12px' }}>
+          <h3 style={{ color: 'var(--text-primary)', fontSize: '0.92rem', fontWeight: 800, margin: 0 }}>
+            Custom Rate Overrides
           </h3>
-          <p className="text-muted">Leave blank to use the default price.</p>
-        </div>
+          <p className="text-muted" style={{ fontSize: '0.7rem', margin: '2px 0 8px 0' }}>
+            Override standard pricing for this customer. Leave blank to use default rates.
+          </p>
 
-        <div className="table-responsive">
-          <table className="table card-table">
-            <thead>
-              <tr>
-                <th>Service</th>
-                <th>Default (₹)</th>
-                <th>Custom (₹)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {services.map(svc => (
-                <tr key={svc.id}>
-                  <td data-label="Service" style={{ fontWeight: 500 }}>{svc.name}</td>
-                  <td data-label="Default" style={{ whiteSpace: 'nowrap', color: 'var(--text-light)' }}>
-                    {formatCurrency(svc.defaultPrice)}
-                  </td>
-                  <td data-label="Custom (₹)">
+          {/* Service Pricing Search */}
+          <div style={{ position: 'relative', marginBottom: '10px' }}>
+            <input
+              type="text"
+              placeholder="Search services (e.g. Bedspread)..."
+              value={serviceSearch}
+              onChange={e => setServiceSearch(e.target.value)}
+              className="form-control"
+              style={{ fontSize: '0.78rem', height: '32px', paddingLeft: '32px' }}
+            />
+            <Search size={12} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-light)' }} />
+            {serviceSearch && (
+              <button 
+                type="button" 
+                onClick={() => setServiceSearch('')} 
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-light)', cursor: 'pointer' }}
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Pricing Grid cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto', paddingRight: '2px' }}>
+            {filteredServices.length > 0 ? (
+              filteredServices.map(svc => (
+                <div 
+                  key={svc.id} 
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    padding: '8px 10px',
+                    background: 'var(--surface-overlay)',
+                    border: '1px solid var(--border-light)',
+                    borderRadius: '10px'
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {svc.name}
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Default: {formatCurrency(svc.defaultPrice)}
+                    </div>
+                  </div>
+
+                  <div style={{ width: '90px', flexShrink: 0 }}>
                     <input
                       type="number"
                       min="0"
@@ -251,25 +310,36 @@ export default function CustomerForm() {
                       onChange={e => handlePriceChange(svc.id, e.target.value)}
                       inputMode="decimal"
                       placeholder="Default"
+                      style={{ height: '28px', fontSize: '0.78rem', padding: '0 8px', borderRadius: '6px', textAlign: 'right' }}
                     />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', padding: '16px 10px', color: 'var(--text-muted)', fontSize: '0.74rem' }}>
+                No services match your search
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* ── Action Buttons ─────────────────────────── */}
-        <div className="action-row">
-          <button type="submit" disabled={loading} className="btn btn-primary">
-            {loading ? 'Saving...' : 'Save Customer'}
-          </button>
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
           <button
             type="button"
             onClick={() => navigate('/customers')}
             className="btn btn-secondary"
+            style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px' }}
           >
             Cancel
+          </button>
+          <button 
+            type="submit" 
+            disabled={loading} 
+            className="btn btn-primary"
+            style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px' }}
+          >
+            {loading ? 'Saving...' : 'Save Customer'}
           </button>
         </div>
       </form>

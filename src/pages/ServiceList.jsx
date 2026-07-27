@@ -5,10 +5,11 @@ import {
 import { db } from '../firebase';
 import { FALLBACK_SERVICES } from '../utils/constants';
 import { sortServices } from '../utils/serviceHelpers';
-import { Edit, Trash2, Plus, Check, X, Download, ArrowUp, ArrowDown } from 'lucide-react';
+import { Edit, Trash2, Plus, Check, X, Download, ArrowUp, ArrowDown, Tag, AlertTriangle } from 'lucide-react';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 import { formatCurrency } from '../utils/currencyFormatter';
+import { SkeletonList } from '../components/DhobiqLoader';
 
 export default function ServiceList() {
   const [services,       setServices]       = useState([]);
@@ -172,28 +173,34 @@ export default function ServiceList() {
   if (!loading && isOfflineError) return <OfflineScreen onRetry={fetchServices} />;
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
       {/* Page Header */}
-      <div className="flex-between mb-2">
-        <h2 className="card-title" style={{ border: 'none', margin: 0 }}>Services</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Services Menu</h2>
+          <p className="text-muted" style={{ fontSize: '0.74rem', marginTop: '2px', margin: 0 }}>Manage laundry types and rates</p>
+        </div>
         {!showAddForm && (
           <button
             className="btn btn-primary"
             onClick={() => { setShowAddForm(true); setEditId(null); setDeleteId(null); }}
+            style={{ padding: '8px 16px', fontSize: '0.78rem', minHeight: '34px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
           >
-            <Plus size={16} /> Add Service
+            <Plus size={14} /> Add Service
           </button>
         )}
       </div>
 
       {/* Add Service Form */}
       {showAddForm && (
-        <div className="card" style={{ borderLeft: '4px solid var(--primary)' }}>
-          <h3 style={{ color: 'var(--primary)', fontSize: '1rem', marginBottom: '12px' }}>New Service</h3>
+        <div className="card" style={{ borderTop: '4px solid var(--primary)', borderRadius: '16px', padding: '16px' }}>
+          <h3 style={{ color: 'var(--text-primary)', fontSize: '0.95rem', fontWeight: 800, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Plus size={16} style={{ color: 'var(--primary)' }} /> New Service
+          </h3>
           <form onSubmit={handleAdd}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '16px' }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label htmlFor="svc-name">Service Name</label>
+                <label className="filter-label" htmlFor="svc-name">Service Name</label>
                 <input
                   id="svc-name" type="text" className="form-control"
                   value={newName} onChange={e => setNewName(e.target.value)}
@@ -201,7 +208,7 @@ export default function ServiceList() {
                 />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label htmlFor="svc-price">Default Price (₹)</label>
+                <label className="filter-label" htmlFor="svc-price">Default Price (₹)</label>
                 <input
                   id="svc-price" type="number" min="0" step="0.01"
                   className="form-control" value={newPrice}
@@ -210,7 +217,7 @@ export default function ServiceList() {
                 />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
-                <label htmlFor="svc-order">Sort Order <span style={{ color: 'var(--text-light)', fontWeight: 400 }}>(optional)</span></label>
+                <label className="filter-label" htmlFor="svc-order">Sort Order <span style={{ color: 'var(--text-light)', fontWeight: 400 }}>(optional)</span></label>
                 <input
                   id="svc-order" type="number" min="1" step="1"
                   className="form-control" value={newOrder}
@@ -219,172 +226,214 @@ export default function ServiceList() {
                 />
               </div>
             </div>
-            <div className="action-row">
-              <button type="submit" disabled={saving} className="btn btn-primary">
-                <Check size={16} /> {saving ? 'Saving...' : 'Save Service'}
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.8rem', borderRadius: '10px' }} onClick={() => { setShowAddForm(false); setNewName(''); setNewPrice(''); setNewOrder(''); }}>
+                Cancel
               </button>
-              <button
-                type="button" className="btn btn-secondary"
-                onClick={() => { setShowAddForm(false); setNewName(''); setNewPrice(''); setNewOrder(''); }}
-              >
-                <X size={16} /> Cancel
+              <button type="submit" disabled={saving} className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.8rem', borderRadius: '10px' }}>
+                <Check size={14} /> {saving ? 'Saving...' : 'Save Service'}
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* Services Table */}
-      <div className="card">
+      {/* Services List Content Feed */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {loading ? (
-          <div className="loading-pulse">
-            <div className="loading-pulse__bar" />
-            <div className="loading-pulse__bar" style={{ width: '70%' }} />
-            <div className="loading-pulse__bar" style={{ width: '50%' }} />
-          </div>
+          <SkeletonList count={4} />
         ) : services.length === 0 ? (
-          <div className="text-center" style={{ padding: '32px 16px' }}>
-            <p className="text-muted" style={{ marginBottom: '16px' }}>
+          <div style={{ textAlign: 'center', padding: '40px 16px', border: '1px solid rgba(0, 61, 130, 0.04)', borderRadius: '16px', background: '#ffffff' }}>
+            <p className="text-muted" style={{ marginBottom: '20px', fontSize: '0.85rem' }}>
               No services found. Start by adding a service or import our standard laundry defaults.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
               {!showAddForm && (
-                <button className="btn btn-primary w-100" style={{ maxWidth: '250px' }} onClick={() => setShowAddForm(true)}>
-                  <Plus size={18} /> Add First Service
+                <button className="btn btn-primary w-100" style={{ maxWidth: '250px', borderRadius: '10px' }} onClick={() => setShowAddForm(true)}>
+                  <Plus size={16} /> Add First Service
                 </button>
               )}
               <button
-                className="btn btn-secondary w-100" style={{ maxWidth: '250px' }}
+                className="btn btn-secondary w-100" style={{ maxWidth: '250px', borderRadius: '10px', background: 'rgba(2, 132, 199, 0.06)', color: 'var(--primary)', border: '1px solid rgba(2, 132, 199, 0.15)' }}
                 onClick={handleSeedDefaults} disabled={saving}
               >
-                <Download size={18} /> {saving ? 'Importing...' : 'Import Default Services'}
+                <Download size={16} /> {saving ? 'Importing...' : 'Import Defaults'}
               </button>
             </div>
           </div>
         ) : (
-          <div className="table-responsive">
-            <table className="table card-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '50px' }}>Order</th>
-                  <th>Service Name</th>
-                  <th>Default Price</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {services.map((svc, idx) => (
-                  <React.Fragment key={svc.id}>
-                    <tr>
-                      {/* Sort order + up/down buttons */}
-                      <td data-label="Order">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <span style={{ color: 'var(--text-light)', fontSize: '0.82rem', minWidth: '18px' }}>
-                            {svc.sort_order != null ? svc.sort_order : '—'}
-                          </span>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <button
-                              className="btn-icon" style={{ padding: '2px', minWidth: 'unset', minHeight: 'unset' }}
-                              onClick={() => moveService(idx, -1)} disabled={saving || idx === 0}
-                              title="Move up"
-                            >
-                              <ArrowUp size={12} />
-                            </button>
-                            <button
-                              className="btn-icon" style={{ padding: '2px', minWidth: 'unset', minHeight: 'unset' }}
-                              onClick={() => moveService(idx, 1)} disabled={saving || idx === services.length - 1}
-                              title="Move down"
-                            >
-                              <ArrowDown size={12} />
-                            </button>
+          services.map((svc, idx) => (
+            <React.Fragment key={svc.id}>
+              {editId === svc.id ? (
+                /* INLINE EDIT FORM CARD */
+                <div className="list-card" style={{ padding: '16px', background: '#ffffff', borderRadius: '16px', border: '1.5px solid var(--primary)', boxShadow: '0 4px 12px rgba(0,61,130,0.08)', margin: 0 }}>
+                  <form onSubmit={handleUpdate}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '10px', marginBottom: '12px' }}>
+                      <div>
+                        <label className="filter-label">Service Name</label>
+                        <input type="text" className="form-control" value={editName} onChange={e => setEditName(e.target.value)} autoFocus required />
+                      </div>
+                      <div>
+                        <label className="filter-label">Price</label>
+                        <input type="number" min="0" step="0.01" className="form-control" value={editPrice} onChange={e => setEditPrice(e.target.value)} inputMode="decimal" required />
+                      </div>
+                      <div>
+                        <label className="filter-label">Order</label>
+                        <input type="number" min="1" step="1" className="form-control" value={editOrder} onChange={e => setEditOrder(e.target.value)} placeholder="Opt" />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <button type="button" className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.78rem', borderRadius: '8px' }} onClick={cancelEdit}>Cancel</button>
+                      <button type="submit" className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '0.78rem', borderRadius: '8px' }} disabled={saving}>
+                        {saving ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              ) : (
+                /* STANDARD SERVICE CARD */
+                <div 
+                  className="list-card" 
+                  style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    padding: '12px 14px', 
+                    background: '#ffffff',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(0, 61, 130, 0.04)',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.01)',
+                    margin: 0
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '12px' }}>
+                    {/* Circle Icon Box */}
+                    <div style={{ 
+                      backgroundColor: 'rgba(2, 132, 199, 0.06)', 
+                      color: 'var(--primary)',
+                      width: '36px',
+                      height: '36px',
+                      minWidth: '36px',
+                      borderRadius: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <Tag size={16} />
+                    </div>
+                    
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                            {svc.name}
+                          </div>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Order: <strong>{svc.sort_order != null ? svc.sort_order : '—'}</strong>
                           </div>
                         </div>
-                      </td>
-
-                      {editId === svc.id ? (
-                        <>
-                          <td data-label="Service Name">
-                            <input type="text" className="form-control" value={editName} onChange={e => setEditName(e.target.value)} autoFocus />
-                          </td>
-                          <td data-label="Default Price">
-                            <input type="number" min="0" step="0.01" className="form-control" value={editPrice} onChange={e => setEditPrice(e.target.value)} inputMode="decimal" />
-                          </td>
-                          <td data-label="Actions" style={{ minWidth: '180px' }}>
-                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                              <div className="form-group" style={{ marginBottom: 0 }}>
-                                <input
-                                  type="number" min="1" step="1"
-                                  className="form-control" style={{ maxWidth: '80px' }}
-                                  value={editOrder} onChange={e => setEditOrder(e.target.value)}
-                                  placeholder="Order"
-                                />
-                              </div>
-                              <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: '0.8rem' }} onClick={handleUpdate} disabled={saving} title="Save">
-                                <Check size={15} />
-                              </button>
-                              <button className="btn btn-secondary" style={{ padding: '6px 10px', fontSize: '0.8rem' }} onClick={cancelEdit} title="Cancel">
-                                <X size={15} />
-                              </button>
-                            </div>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td data-label="Service Name" style={{ fontWeight: 500 }}>{svc.name}</td>
-                          <td data-label="Default Price" style={{ whiteSpace: 'nowrap' }}>{formatCurrency(Number(svc.defaultPrice))}</td>
-                          <td data-label="Actions">
-                            <div style={{ display: 'flex', gap: '6px' }}>
-                              <button className="btn-icon edit" title="Edit" onClick={() => startEdit(svc)}>
-                                <Edit size={18} />
-                              </button>
-                              <button
-                                className="btn-icon delete" title="Delete"
-                                style={{ color: deleteId === svc.id ? 'var(--danger)' : undefined }}
-                                onClick={() => setDeleteId(deleteId === svc.id ? null : svc.id)}
-                              >
-                                <Trash2 size={17} />
-                              </button>
-                            </div>
-                          </td>
-                        </>
-                      )}
-                    </tr>
-
-                    {/* Delete Confirm Row */}
-                    {deleteId === svc.id && (
-                      <tr style={{ background: '#fff5f5' }}>
-                        <td colSpan={4}>
-                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px', padding: '4px 0' }}>
-                            <span style={{ fontSize: '0.88rem', color: 'var(--danger)', flex: 1 }}>
-                              Delete <strong>{svc.name}</strong>? This cannot be undone.
-                            </span>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button className="btn btn-danger" style={{ padding: '6px 12px', fontSize: '0.82rem' }} onClick={() => handleDelete(svc.id)} disabled={saving}>
-                                {saving ? 'Deleting...' : 'Yes, Delete'}
-                              </button>
-                              <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.82rem' }} onClick={() => setDeleteId(null)}>
-                                Cancel
-                              </button>
-                            </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                            {formatCurrency(Number(svc.defaultPrice))}
                           </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Delete Confirmation Block */}
+                  {deleteId === svc.id && (
+                    <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(239, 68, 68, 0.04)', borderRadius: '8px', border: '1px solid rgba(239, 68, 68, 0.1)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: 'var(--danger)' }}>
+                        <AlertTriangle size={14} />
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>Delete {svc.name}?</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.75rem', borderRadius: '6px' }} onClick={() => setDeleteId(null)}>Cancel</button>
+                        <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: '0.75rem', borderRadius: '6px' }} onClick={() => handleDelete(svc.id)} disabled={saving}>
+                          {saving ? 'Deleting...' : 'Yes, Delete'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Action Row */}
+                  {!deleteId && (
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between', 
+                      marginTop: '12px', 
+                      paddingTop: '10px', 
+                      borderTop: '1px solid rgba(0, 61, 130, 0.04)' 
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <button
+                          className="btn-icon" 
+                          style={{ 
+                            width: '28px', height: '28px', minWidth: '28px', 
+                            background: 'rgba(0,0,0,0.03)', border: 'none', color: 'var(--text-secondary)', borderRadius: '6px' 
+                          }}
+                          onClick={() => moveService(idx, -1)} disabled={saving || idx === 0}
+                          title="Move up"
+                        >
+                          <ArrowUp size={14} />
+                        </button>
+                        <button
+                          className="btn-icon" 
+                          style={{ 
+                            width: '28px', height: '28px', minWidth: '28px', 
+                            background: 'rgba(0,0,0,0.03)', border: 'none', color: 'var(--text-secondary)', borderRadius: '6px' 
+                          }}
+                          onClick={() => moveService(idx, 1)} disabled={saving || idx === services.length - 1}
+                          title="Move down"
+                        >
+                          <ArrowDown size={14} />
+                        </button>
+                      </div>
+                      
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button 
+                          onClick={() => startEdit(svc)} 
+                          className="btn-icon" 
+                          style={{ 
+                            width: '30px', height: '30px', minWidth: '30px', 
+                            background: 'rgba(245, 158, 11, 0.06)', border: '1px solid rgba(245, 158, 11, 0.15)', color: '#d97706', borderRadius: '8px'
+                          }} 
+                          title="Edit"
+                        >
+                          <Edit size={13} />
+                        </button>
+                        <button 
+                          onClick={() => setDeleteId(deleteId === svc.id ? null : svc.id)} 
+                          className="btn-icon" 
+                          style={{ 
+                            width: '30px', height: '30px', minWidth: '30px', 
+                            background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: '8px'
+                          }} 
+                          title="Delete"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </React.Fragment>
+          ))
         )}
       </div>
 
       {/* Tip */}
-      <div className="card" style={{ background: 'var(--primary-light)', boxShadow: 'none', padding: '12px 16px' }}>
-        <p style={{ fontSize: '0.83rem', color: 'var(--primary)', margin: 0, lineHeight: 1.6 }}>
-          💡 <strong>Tip:</strong> Use <strong>Sort Order</strong> to control the display order in Bills, Invoices, and PDFs. 
-          Use ↑↓ arrows for quick reordering, or type an order number when editing.
-        </p>
-      </div>
+      {services.length > 0 && (
+        <div style={{ background: 'rgba(2, 132, 199, 0.04)', border: '1px dashed rgba(2, 132, 199, 0.2)', padding: '12px 14px', borderRadius: '12px', marginTop: '4px' }}>
+          <p style={{ fontSize: '0.78rem', color: 'var(--primary)', margin: 0, lineHeight: 1.5 }}>
+            <span style={{ fontSize: '0.9rem', marginRight: '4px' }}>💡</span>
+            Use the <strong>↑↓ arrows</strong> to instantly reorder services for Bills and Invoices.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

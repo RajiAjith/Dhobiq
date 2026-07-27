@@ -9,6 +9,7 @@ import { format } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 import { formatCurrency } from '../utils/currencyFormatter';
+import { Plus, Minus, Check, X, Search, AlertCircle } from 'lucide-react';
 
 export default function BillCreate() {
   const [customers,          setCustomers]          = useState([]);
@@ -21,6 +22,7 @@ export default function BillCreate() {
   const [isOfflineError,     setIsOfflineError]     = useState(false);
   const [saveAsCustomPricing, setSaveAsCustomPricing] = useState(true);
   const [billDate,           setBillDate]           = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [itemSearch,         setItemSearch]         = useState('');
 
   const { id } = useParams();
   const isEditing = Boolean(id);
@@ -139,6 +141,25 @@ export default function BillCreate() {
     setItems(newItems);
   };
 
+  const handleIncrement = (index) => {
+    const newItems = [...items];
+    const currentVal = evaluateExpr(newItems[index].quantity);
+    const newVal = currentVal + 1;
+    newItems[index].quantity = newVal;
+    newItems[index].total = newVal * newItems[index].unitPrice;
+    setItems(newItems);
+  };
+
+  const handleDecrement = (index) => {
+    const newItems = [...items];
+    const currentVal = evaluateExpr(newItems[index].quantity);
+    if (currentVal <= 0) return;
+    const newVal = Math.max(0, currentVal - 1);
+    newItems[index].quantity = newVal;
+    newItems[index].total = newVal * newItems[index].unitPrice;
+    setItems(newItems);
+  };
+
   const finalizeQuantity = (index) => {
     const newItems = [...items];
     const result = evaluateExpr(newItems[index].quantity);
@@ -172,7 +193,7 @@ export default function BillCreate() {
   // ── Submit handler ─────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const activeItems = items.filter(item => item.quantity > 0);
+    const activeItems = items.filter(item => evaluateExpr(item.quantity) > 0);
     if (activeItems.length === 0) {
       alert('Please add at least one item with a quantity greater than 0');
       return;
@@ -192,11 +213,16 @@ export default function BillCreate() {
       const [year, month, day] = billDate.split('-');
       const finalTimestamp = new Date(year, month - 1, day, 12, 0, 0).getTime();
 
+      const finalActiveItems = activeItems.map(item => ({
+        ...item,
+        quantity: evaluateExpr(item.quantity)
+      }));
+
       if (isEditing) {
         await updateDoc(doc(db, 'bills', id), {
           customerId:   customer.id,
           customerName: customer.name,
-          items:        activeItems,
+          items:        finalActiveItems,
           totalAmount:  newTotal,
           notes:        notes.trim(),
           date:         finalTimestamp,
@@ -209,7 +235,7 @@ export default function BillCreate() {
           customerId:   customer.id,
           customerName: customer.name,
           date:         finalTimestamp,
-          items:        activeItems,
+          items:        finalActiveItems,
           totalAmount:  newTotal,
           notes:        notes.trim(),
           invoiceId:    null,
@@ -221,7 +247,7 @@ export default function BillCreate() {
       if (saveAsCustomPricing) {
         const currentCustomPrices = { ...(customer.customPrices || {}) };
         let hasChanges = false;
-        activeItems.forEach(item => {
+        finalActiveItems.forEach(item => {
           const service = services.find(s => s.id === item.id);
           const currentPrice = currentCustomPrices[item.id] !== undefined
             ? currentCustomPrices[item.id]
@@ -251,12 +277,11 @@ export default function BillCreate() {
     setLoading(false);
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   if (!dataLoading && isOfflineError) return <OfflineScreen onRetry={loadData} />;
 
   if (dataLoading) {
     return (
-      <div className="card">
+      <div className="card" style={{ display: 'flex', justifyContent: 'center', padding: '40px 20px' }}>
         <div className="loading-pulse">
           <div className="loading-pulse__bar" style={{ width: '40%' }} />
           <div className="loading-pulse__bar" />
@@ -267,153 +292,251 @@ export default function BillCreate() {
   }
 
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
+  
+  // Filter items matching search OR items already containing quantity > 0
+  const visibleItems = items.map((item, idx) => ({ ...item, originalIndex: idx }))
+    .filter(item => 
+      item.name.toLowerCase().includes(itemSearch.toLowerCase()) || 
+      evaluateExpr(item.quantity) > 0
+    );
 
   return (
-    <div className="card">
-      <h2 className="card-title">{isEditing ? 'Edit Bill' : 'Create New Bill'}</h2>
+    <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+      <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '14px', border: 'none' }}>
+        {isEditing ? 'Edit Bill Details' : 'Create New Bill'}
+      </h2>
 
       {isEditing && existingBill?.invoiceId && (
-        <div className="alert-warning mb-2">
-          ⚠️ This bill is already linked to invoice <strong>{existingBill.invoiceId}</strong>. Editing is disabled.
+        <div style={{ background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.2)', padding: '10px 12px', borderRadius: '12px', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px', color: '#d97706' }}>
+          <AlertCircle size={15} />
+          <span style={{ fontSize: '0.76rem', fontWeight: 700 }}>
+            This bill is locked because it is linked to Invoice #{existingBill.invoiceId}
+          </span>
         </div>
       )}
 
-      {/* Customer Selector */}
-      <div className="form-group">
-        <label htmlFor="bill-customer">Select Customer</label>
-        <select
-          id="bill-customer"
-          className="form-control"
-          value={selectedCustomerId}
-          onChange={e => setSelectedCustomerId(e.target.value)}
-          disabled={isEditing}
-        >
-          <option value="">-- Choose a customer --</option>
-          {customers.map(c => (
-            <option key={c.id} value={c.id}>{c.name} - {c.phone}</option>
-          ))}
-        </select>
+      {/* Customer & Date Selector Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="filter-label" htmlFor="bill-customer">Select Customer</label>
+          <select
+            id="bill-customer"
+            className="form-control"
+            value={selectedCustomerId}
+            onChange={e => setSelectedCustomerId(e.target.value)}
+            disabled={isEditing}
+            style={{ fontSize: '0.8rem', height: '36px' }}
+          >
+            <option value="">-- Choose Customer --</option>
+            {customers.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="filter-label" htmlFor="bill-date">Bill Date</label>
+          <input
+            id="bill-date"
+            type="date"
+            className="form-control"
+            value={billDate}
+            onChange={e => setBillDate(e.target.value)}
+            disabled={isEditing && existingBill?.invoiceId}
+            style={{ fontSize: '0.8rem', height: '36px' }}
+          />
+        </div>
       </div>
 
-      {/* Date Selector */}
-      <div className="form-group">
-        <label htmlFor="bill-date">Bill Date</label>
-        <input
-          id="bill-date"
-          type="date"
-          className="form-control"
-          value={billDate}
-          onChange={e => setBillDate(e.target.value)}
-          disabled={isEditing && existingBill?.invoiceId}
-        />
-      </div>
+      {selectedCustomer && (
+        <div style={{ background: 'rgba(2, 132, 199, 0.04)', border: '1px solid rgba(2, 132, 199, 0.1)', padding: '10px 12px', borderRadius: '12px', marginBottom: '16px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--primary)' }}>Customer Info:</span>
+          <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+            📞 Phone: <strong>{selectedCustomer.phone || 'N/A'}</strong>
+            {selectedCustomer.customPrices && Object.keys(selectedCustomer.customPrices).length > 0 && (
+              <span style={{ marginLeft: '10px', color: 'var(--success)', fontWeight: 700 }}>✓ Custom Prices Loaded</span>
+            )}
+          </span>
+        </div>
+      )}
 
       {selectedCustomerId && (
-        <form onSubmit={handleSubmit}>
-          {/* Bill Items Table */}
-          <div className="table-responsive">
-            <table className="table card-table">
-              <thead>
-                <tr>
-                  <th>Service</th>
-                  <th>Qty</th>
-                  <th>Rate (₹)</th>
-                  <th>Amount (₹)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item, index) => (
-                  <tr key={item.id}>
-                    <td data-label="Service" style={{ minWidth: '100px' }}>{item.name}</td>
-                    <td data-label="Qty" style={{ minWidth: '72px' }}>
-                      <input
-                        type="text"
-                        className="form-control"
-                        value={item.quantity || ''}
-                        onChange={e => handleItemChange(index, 'quantity', e.target.value)}
-                        onBlur={() => finalizeQuantity(index)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            finalizeQuantity(index);
-                          }
-                        }}
-                        placeholder="0"
-                        title="Enter quantity or expression (e.g. 5+10)"
-                        disabled={isEditing && existingBill?.invoiceId}
-                      />
-                    </td>
-                    <td data-label="Rate" style={{ minWidth: '86px' }}>
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Services Search Bar */}
+          <div style={{ position: 'relative' }}>
+            <input
+              type="text"
+              placeholder="Search services (e.g. Bedspread, Shirt)..."
+              value={itemSearch}
+              onChange={e => setItemSearch(e.target.value)}
+              className="form-control"
+              style={{ fontSize: '0.8rem', height: '36px', paddingLeft: '32px' }}
+            />
+            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-light)' }} />
+            {itemSearch && (
+              <button 
+                type="button" 
+                onClick={() => setItemSearch('')} 
+                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-light)', cursor: 'pointer' }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          {/* List Cards for Services */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '350px', overflowY: 'auto', paddingRight: '4px' }}>
+            {visibleItems.length > 0 ? (
+              visibleItems.map(item => (
+                <div 
+                  key={item.id} 
+                  className="list-card" 
+                  style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    padding: '12px 14px', 
+                    background: '#ffffff',
+                    borderRadius: '14px',
+                    border: '1px solid rgba(0, 61, 130, 0.04)',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.01)',
+                    margin: 0
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 800, color: 'var(--text-primary)', fontSize: '0.86rem' }}>{item.name}</span>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--primary)' }}>
+                      Total: {formatCurrency(item.total)}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '12px', borderTop: '1px solid rgba(0, 61, 130, 0.04)', paddingTop: '8px', marginTop: '6px' }}>
+                    {/* Qty Field */}
+                    <div>
+                      <label className="filter-label" style={{ marginBottom: '4px', fontSize: '0.66rem' }}>Qty (or expression)</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          style={{ width: '28px', height: '28px', minWidth: '28px', padding: 0, borderRadius: '6px', background: 'rgba(0,0,0,0.03)', border: 'none' }}
+                          onClick={() => handleDecrement(item.originalIndex)}
+                          disabled={isEditing && existingBill?.invoiceId}
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <input
+                          type="text"
+                          className="form-control"
+                          style={{ height: '28px', padding: '0 4px', textAlign: 'center', fontSize: '0.8rem', borderRadius: '6px' }}
+                          value={item.quantity || ''}
+                          onChange={e => handleItemChange(item.originalIndex, 'quantity', e.target.value)}
+                          onBlur={() => finalizeQuantity(item.originalIndex)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              finalizeQuantity(item.originalIndex);
+                            }
+                          }}
+                          placeholder="0"
+                          disabled={isEditing && existingBill?.invoiceId}
+                        />
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          style={{ width: '28px', height: '28px', minWidth: '28px', padding: 0, borderRadius: '6px', background: 'rgba(0,0,0,0.03)', border: 'none' }}
+                          onClick={() => handleIncrement(item.originalIndex)}
+                          disabled={isEditing && existingBill?.invoiceId}
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Unit Price Field */}
+                    <div>
+                      <label className="filter-label" style={{ marginBottom: '4px', fontSize: '0.66rem' }}>Rate (₹)</label>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
                         className="form-control"
+                        style={{ height: '28px', fontSize: '0.8rem', padding: '0 8px', borderRadius: '6px' }}
                         value={item.unitPrice}
-                        onChange={e => handleItemChange(index, 'unitPrice', e.target.value)}
+                        onChange={e => handleItemChange(item.originalIndex, 'unitPrice', e.target.value)}
                         inputMode="decimal"
                         disabled={isEditing && existingBill?.invoiceId}
                       />
-                    </td>
-                    <td data-label="Amount" style={{ whiteSpace: 'nowrap', fontWeight: '500', textAlign: 'right', minWidth: '72px' }}>
-                      {formatCurrency(item.total)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                No services match your search
+              </div>
+            )}
           </div>
 
-          {/* Totals */}
-          <div className="total-section sticky-mobile-total">
-            <div className="total-row">
+          {/* Sticky Total Panel */}
+          <div style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-light)', borderRadius: '14px', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
               <span>Subtotal:</span>
               <span>{formatCurrency(calculateTotal())}</span>
             </div>
-            <div className="total-row grand-total">
-              <span>Total:</span>
-              <span>{formatCurrency(calculateTotal())}</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.94rem', fontWeight: 800, color: 'var(--text-primary)', borderTop: '1px dashed var(--border)', paddingTop: '6px' }}>
+              <span>Grand Total:</span>
+              <span style={{ color: 'var(--primary)' }}>{formatCurrency(calculateTotal())}</span>
             </div>
           </div>
 
           {/* Notes */}
-          <div className="form-group" style={{ marginTop: '14px' }}>
-            <label htmlFor="bill-notes">Notes (optional)</label>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="bill-notes">Notes (optional)</label>
             <input
               id="bill-notes"
               type="text"
               className="form-control"
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder="e.g. urgent, pickup date..."
+              placeholder="e.g. urgent delivery, iron only..."
               disabled={isEditing && existingBill?.invoiceId}
+              style={{ fontSize: '0.8rem', height: '36px' }}
             />
           </div>
 
-          {/* Save custom pricing toggle */}
+          {/* Save custom pricing checkbox */}
           {!existingBill?.invoiceId && (
-            <div className="form-group" style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface-overlay)', padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
               <input
                 type="checkbox"
                 id="save-custom-pricing"
                 checked={saveAsCustomPricing}
                 onChange={e => setSaveAsCustomPricing(e.target.checked)}
-                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
               />
-              <label htmlFor="save-custom-pricing" style={{ fontSize: '0.88rem', color: 'var(--text-dark)', cursor: 'pointer', fontWeight: '500' }}>
-                Save these prices as default for {selectedCustomer?.name || 'this customer'}
+              <label htmlFor="save-custom-pricing" style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600 }}>
+                Save updated prices as default for {selectedCustomer?.name || 'this customer'}
               </label>
             </div>
           )}
 
-          {/* Action Buttons */}
+          {/* Action buttons */}
           {!existingBill?.invoiceId && (
-            <div className="action-row">
-              <button type="submit" disabled={loading} className="btn btn-primary">
-                {loading ? 'Saving...' : (isEditing ? 'Update Bill' : 'Save Bill')}
-              </button>
-              <button type="button" onClick={() => navigate('/bills')} className="btn btn-secondary">
+            <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+              <button 
+                type="button" 
+                onClick={() => navigate('/bills')} 
+                className="btn btn-secondary"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '0.8rem', borderRadius: '12px' }}
+              >
                 Cancel
+              </button>
+              <button 
+                type="submit" 
+                disabled={loading} 
+                className="btn btn-primary"
+                style={{ flex: 1, padding: '10px 16px', fontSize: '0.8rem', borderRadius: '12px' }}
+              >
+                {loading ? 'Saving...' : (isEditing ? 'Update Bill' : 'Save Bill')}
               </button>
             </div>
           )}

@@ -3,10 +3,12 @@ import { collection, getDocs, deleteDoc, doc, query, orderBy } from 'firebase/fi
 import { db } from '../firebase';
 import { Link } from 'react-router-dom';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
-import { Search, Plus, Edit, Trash2, Calendar, FileText, Download, AlertTriangle, Eye } from 'lucide-react';
+import { Search, Plus, Edit, Trash2, Calendar, FileText, Download, AlertTriangle, Eye, Wallet, ChevronRight } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
 import OfflineScreen from '../components/OfflineScreen';
 import { formatCurrency } from '../utils/currencyFormatter';
+import { SkeletonList } from '../components/DhobiqLoader';
+import { useConfirm } from '../components/ConfirmDialog';
 
 export default function ExpenseList() {
   const [expenses,       setExpenses]       = useState([]);
@@ -23,6 +25,24 @@ export default function ExpenseList() {
   const [toDate, setToDate] = useState(format(endOfMonth(new Date()), 'yyyy-MM-dd'));
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
+  const [ConfirmUI, confirm] = useConfirm();
+
+  const getIconBg = (category) => {
+    if (!category) return 'var(--brand-50)';
+    const code = category.charCodeAt(category.length - 1) % 4;
+    return ['var(--brand-50)', 'var(--success-bg)', 'var(--purple-bg)', 'var(--orange-bg)'][code];
+  };
+
+  const getIconColor = (category) => {
+    if (!category) return 'var(--primary)';
+    const code = category.charCodeAt(category.length - 1) % 4;
+    return ['var(--primary)', 'var(--success)', 'var(--purple)', 'var(--orange)'][code];
+  };
+
+  const formatCurrencyNoDecimals = (val) => {
+    const rounded = Math.round(Number(val) || 0);
+    return formatCurrency(rounded).replace(/\.00$/, '');
+  };
 
   const loadData = useCallback(async () => {
     if (!navigator.onLine) {
@@ -123,7 +143,12 @@ export default function ExpenseList() {
       return;
     }
 
-    if (!window.confirm("Are you sure you want to delete this expense record?")) return;
+    const ok = await confirm({
+      title: 'Delete Expense?',
+      message: 'This expense record will be permanently deleted.',
+      confirmLabel: 'Delete Expense',
+    });
+    if (!ok) return;
 
     try {
       await deleteDoc(doc(db, 'expenses', expId));
@@ -141,38 +166,37 @@ export default function ExpenseList() {
   const totalFilteredAmount = filtered.reduce((acc, curr) => acc + (Number(curr.amount) || 0), 0);
 
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
+      {ConfirmUI}
       {/* Page Header */}
-      <div className="flex-between mb-2">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 className="card-title" style={{ border: 'none', margin: 0 }}>Expense Ledger</h2>
-          <p className="text-muted" style={{ fontSize: '0.82rem' }}>Track facility running costs, supplies, utilities, and salary values</p>
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Expense Ledger</h2>
+          <p className="text-muted" style={{ fontSize: '0.74rem', marginTop: '2px', margin: 0 }}>Track running costs, utilities, and payrolls</p>
         </div>
-        <Link to="/expenses/new" className="btn btn-primary">
-          <Plus size={16} /> Add Expense
+        <Link to="/expenses/new" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.78rem', minHeight: '34px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <Plus size={14} /> Add Expense
         </Link>
       </div>
 
-      {/* Expense Filters */}
-      <div className="filters-section" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))' }}>
-        <div className="filter-item" style={{ flex: '2 1 180px' }}>
-          <label htmlFor="exp-search">Search Keyword</label>
+      {/* Expense Filters Grid */}
+      <div className="filters-section">
+        <div className="filter-item" style={{ gridColumn: 'span 2' }}>
+          <label className="filter-label" htmlFor="exp-search">Search Keyword</label>
           <div style={{ position: 'relative' }}>
             <input
               id="exp-search"
               type="text"
-              placeholder="Search vendor, description..."
+              placeholder="Search vendor, desc..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               className="form-control"
-              style={{ paddingLeft: '32px' }}
             />
-            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-light)' }} />
           </div>
         </div>
 
-        <div className="filter-item">
-          <label htmlFor="exp-cat">Category</label>
+        <div className="filter-item" style={{ gridColumn: 'span 2' }}>
+          <label className="filter-label" htmlFor="exp-cat">Category</label>
           <select
             id="exp-cat"
             value={categoryFilter}
@@ -187,7 +211,7 @@ export default function ExpenseList() {
         </div>
 
         <div className="filter-item">
-          <label htmlFor="exp-from">From Date</label>
+          <label className="filter-label" htmlFor="exp-from">From Date</label>
           <input
             id="exp-from"
             type="date"
@@ -198,7 +222,7 @@ export default function ExpenseList() {
         </div>
 
         <div className="filter-item">
-          <label htmlFor="exp-to">To Date</label>
+          <label className="filter-label" htmlFor="exp-to">To Date</label>
           <input
             id="exp-to"
             type="date"
@@ -210,166 +234,179 @@ export default function ExpenseList() {
       </div>
 
       {/* Aggregate Balance Header Card */}
-      <div className="card" style={{ padding: '14px', backgroundColor: 'var(--primary-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--primary)' }}>TOTAL FILTERED EXPENSES</span>
-        <strong style={{ fontSize: '1.4rem', color: 'var(--primary)' }}>
-          {formatCurrency(totalFilteredAmount)}
+      <div className="card" style={{ padding: '14px 16px', background: 'var(--primary-light)', border: '1px solid rgba(0, 61, 130, 0.08)', borderRadius: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
+        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--primary)' }}>TOTAL FILTERED EXPENSES</span>
+        <strong style={{ fontSize: '1.25rem', color: 'var(--primary)', fontWeight: 800 }}>
+          {formatCurrencyNoDecimals(totalFilteredAmount)}
         </strong>
       </div>
 
-      {/* Expenses Contents */}
-      {loading ? (
-        <div className="card">
-          <div className="loading-pulse">
-            <div className="loading-pulse__bar" style={{ width: '50%' }} />
-            <div className="loading-pulse__bar" />
-            <div className="loading-pulse__bar" style={{ width: '80%' }} />
-          </div>
+      {/* Expenses List Feed */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ paddingBottom: '4px' }}>
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Logged Records</h2>
         </div>
-      ) : error ? (
-        <div className="alert-danger mb-2">{error}</div>
-      ) : filtered.length > 0 ? (
-        <div className="responsive-table-cards">
-          {/* Desktop Table */}
-          <div className="table-responsive card" style={{ padding: 0 }}>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Category</th>
-                  <th>Amount</th>
-                  <th>Description</th>
-                  <th>Vendor</th>
-                  <th>Method</th>
-                  <th>Receipt</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(exp => {
-                  const isSalary = !!exp.salaryPaymentId;
-                  return (
-                    <tr key={exp.id}>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {exp.date ? format(new Date(exp.date), 'dd MMM yyyy') : ''}
-                      </td>
-                      <td>
-                        <span className={`badge ${isSalary ? 'badge-info' : 'badge-warning'}`} style={{ textTransform: 'capitalize' }}>
-                          {exp.category}
-                        </span>
-                      </td>
-                      <td style={{ fontWeight: 600 }}>{formatCurrency(Number(exp.amount || 0))}</td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>{exp.description}</span>
-                          {isSalary && (
-                            <span title="Generated from employee payroll system" style={{ display: 'inline-flex', color: 'var(--info)' }}>
-                              <AlertTriangle size={14} />
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td>{exp.vendor || '—'}</td>
-                      <td>{exp.paymentMethod || 'Cash'}</td>
-                      <td>
-                        {exp.receiptUrl ? (
-                          <a href={exp.receiptUrl} target="_blank" rel="noopener noreferrer" className="btn-icon" style={{ color: 'var(--primary)', minWidth: 0, minHeight: 0, padding: '4px' }} title="View Uploaded File">
-                            <Eye size={16} />
-                          </a>
-                        ) : '—'}
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        {isSalary ? (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-light)', fontStyle: 'italic' }}>Payroll Entry</span>
-                        ) : (
-                          <>
-                            <Link to={`/expenses/${exp.id}/edit`} className="btn-icon edit" title="Edit Expense">
-                              <Edit size={16} />
-                            </Link>
-                            <button onClick={() => handleDelete(exp.id, false)} className="btn-icon delete" title="Delete Expense">
-                              <Trash2 size={16} />
-                            </button>
-                          </>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
 
-          {/* Mobile Cards */}
-          <div className="mobile-card-grid">
+        {loading ? (
+          <SkeletonList count={3} />
+        ) : error ? (
+          <div className="alert-danger" style={{ margin: 0 }}>{error}</div>
+        ) : filtered.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {filtered.map(exp => {
               const isSalary = !!exp.salaryPaymentId;
               return (
-                <div className="card" key={exp.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderLeft: isSalary ? '4px solid var(--info)' : '4px solid var(--warning)' }}>
+                <div 
+                  key={exp.id} 
+                  className="list-card" 
+                  style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    padding: '12px 14px', 
+                    background: '#ffffff',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(0, 61, 130, 0.04)',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.01)',
+                    margin: 0
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '12px' }}>
+                    <div className="icon-box" style={{ 
+                      backgroundColor: getIconBg(exp.category), 
+                      color: getIconColor(exp.category),
+                      width: '34px',
+                      height: '34px',
+                      minWidth: '34px',
+                      borderRadius: '10px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <Wallet size={16} />
+                    </div>
+                    
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--text-primary)', lineHeight: 1.25, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {exp.description || 'Facility Cost'}
+                            {isSalary && (
+                              <span title="Payroll System Entry" style={{ color: 'var(--info)', display: 'inline-flex' }}>
+                                <AlertTriangle size={12} />
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Vendor: <strong>{exp.vendor || '—'}</strong>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                            {formatCurrencyNoDecimals(exp.amount)}
+                          </div>
+                          <div style={{ marginTop: '2px' }}>
+                            <span className={`badge ${isSalary ? 'badge-info' : 'badge-warning'}`} style={{ textTransform: 'capitalize', fontSize: '0.62rem', padding: '2px 6px' }}>
+                              {exp.category}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                   
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <span className={`badge ${isSalary ? 'badge-info' : 'badge-warning'}`} style={{ alignSelf: 'flex-start', marginBottom: '2px' }}>
-                        {exp.category}
-                      </span>
-                      <span style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)' }}>
-                        {exp.description}
-                      </span>
-                    </div>
-                    <span style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text)' }}>
-                      {formatCurrency(Number(exp.amount || 0))}
+                  <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between', 
+                    marginTop: '10px', 
+                    paddingTop: '8px', 
+                    borderTop: '1px solid rgba(0, 61, 130, 0.04)' 
+                  }}>
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+                      {exp.date ? format(new Date(exp.date), 'dd MMM yyyy') : ''} &nbsp;•&nbsp; Method: <strong>{exp.paymentMethod || 'Cash'}</strong>
                     </span>
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '4px', fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Calendar size={14} />
-                      <span>{exp.date ? format(new Date(exp.date), 'dd MMM yy') : ''}</span>
-                    </div>
-                    <div>
-                      Method: <strong>{exp.paymentMethod || 'Cash'}</strong>
-                    </div>
-                    {exp.vendor && (
-                      <div style={{ gridColumn: 'span 2' }}>
-                        Vendor: <strong>{exp.vendor}</strong>
-                      </div>
-                    )}
-                    {exp.receiptUrl && (
-                      <div style={{ gridColumn: 'span 2', marginTop: '4px' }}>
-                        <a href={exp.receiptUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem', width: '100%', gap: '6px' }}>
-                          <Eye size={12} /> View Uploaded Receipt
+                    
+                    {/* Actions Row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {exp.receiptUrl && (
+                        <a 
+                          href={exp.receiptUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="btn-icon" 
+                          style={{ 
+                            width: '32px', 
+                            height: '32px', 
+                            minWidth: '32px',
+                            background: 'rgba(16, 185, 129, 0.06)',
+                            border: '1px solid rgba(16, 185, 129, 0.15)',
+                            color: '#10b981',
+                            borderRadius: '8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }} 
+                          title="View Receipt File"
+                        >
+                          <Eye size={14} />
                         </a>
-                      </div>
-                    )}
+                      )}
+                      {isSalary ? (
+                        <span style={{ fontSize: '0.66rem', color: 'var(--info)', fontStyle: 'italic', fontWeight: 600 }}>Payroll Entry</span>
+                      ) : (
+                        <>
+                          <Link 
+                            to={`/expenses/${exp.id}/edit`} 
+                            className="btn-icon" 
+                            style={{ 
+                              width: '32px', 
+                              height: '32px', 
+                              minWidth: '32px', 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              justifyContent: 'center',
+                              background: 'rgba(245, 158, 11, 0.06)',
+                              border: '1px solid rgba(245, 158, 11, 0.15)',
+                              color: '#d97706',
+                              borderRadius: '8px'
+                            }} 
+                            title="Edit Expense"
+                          >
+                            <Edit size={14} />
+                          </Link>
+                          <button 
+                            onClick={() => handleDelete(exp.id, false)} 
+                            className="btn-icon" 
+                            style={{ 
+                              width: '32px', 
+                              height: '32px', 
+                              minWidth: '32px', 
+                              background: 'rgba(239, 68, 68, 0.06)',
+                              border: '1px solid rgba(239, 68, 68, 0.15)',
+                              color: '#ef4444',
+                              borderRadius: '8px',
+                              cursor: 'pointer' 
+                            }} 
+                            title="Delete Expense"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--border)', paddingTop: '8px', marginTop: '4px' }}>
-                    {isSalary ? (
-                      <span style={{ fontSize: '0.78rem', color: 'var(--info)', fontStyle: 'italic', width: '100%', textAlign: 'center', fontWeight: 500 }}>
-                        Managed under Staff & Salaries
-                      </span>
-                    ) : (
-                      <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                        <Link to={`/expenses/${exp.id}/edit`} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem', flex: 1 }}>
-                          <Edit size={14} /> Edit
-                        </Link>
-                        <button onClick={() => handleDelete(exp.id, false)} className="btn btn-danger" style={{ padding: '6px 12px', fontSize: '0.8rem', backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: 'none', flex: 1 }}>
-                          <Trash2 size={14} /> Delete
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
                 </div>
               );
             })}
           </div>
-        </div>
-      ) : (
-        <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
-          <p className="text-muted" style={{ marginBottom: '16px' }}>No expenses logged for this period.</p>
-          <Link to="/expenses/new" className="btn btn-primary">+ Add New Expense</Link>
-        </div>
-      )}
+        ) : (
+          <div style={{ textAlign: 'center', padding: '32px 16px', border: '1px solid rgba(0, 61, 130, 0.04)', borderRadius: '16px', background: '#ffffff' }}>
+            <p className="text-muted" style={{ marginBottom: '16px', fontSize: '0.82rem' }}>No expenses logged for this period.</p>
+            <Link to="/expenses/new" className="btn btn-primary" style={{ padding: '8px 16px', fontSize: '0.78rem', minHeight: '34px', borderRadius: '10px' }}>+ Add New Expense</Link>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

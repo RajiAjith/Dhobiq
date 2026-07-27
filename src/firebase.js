@@ -12,10 +12,8 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID || "dummy"
 };
 
-console.log("Initializing Firebase with Project:", firebaseConfig.projectId);
-
-// Enable Firestore logging to help diagnose the 1-minute delay
-setLogLevel('debug');
+// Suppress all Firebase SDK internal logs
+setLogLevel('silent');
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -23,9 +21,8 @@ export const auth = getAuth(app);
 // Use robust connection settings for restrictive networks
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
-  useFetchStreams: false, // Prevents hangs in some browser/proxy setups
+  useFetchStreams: false,
 });
 
 export const storage = getStorage(app);
 
-console.log("Firestore and Storage initialized.");

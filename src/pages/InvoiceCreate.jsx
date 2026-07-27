@@ -9,11 +9,8 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 import { formatCurrency } from '../utils/currencyFormatter';
+import { Calendar, User, Search, FileText, CheckSquare, Square, Check, X, Info, Receipt } from 'lucide-react';
 
-/**
- * Aggregate bill items by (serviceId + unitPrice).
- * Items with same service but different rates remain separate rows.
- */
 function aggregateBillItems(selectedBills) {
   const map = {};
   for (const bill of selectedBills) {
@@ -54,7 +51,6 @@ export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
 
-  // ── Initial data load ──────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     if (!navigator.onLine) { setIsOfflineError(true); setDataLoading(false); return; }
     setDataLoading(true);
@@ -69,7 +65,6 @@ export default function InvoiceCreate() {
       setCustomers(custData);
       setServices(svcList);
 
-      // Default period = current month
       const now   = new Date();
       const from  = startOfMonth(now);
       const to    = endOfMonth(now);
@@ -89,7 +84,6 @@ export default function InvoiceCreate() {
   useEffect(() => { loadData(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (isOnline && wasOffline) loadData(); }, [isOnline, wasOffline]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fetch uninvoiced bills for selected customer + period ──────────────────
   const fetchBills = async () => {
     if (!customerId || !periodFrom || !periodTo) {
       alert('Please select a customer and date range first.');
@@ -110,13 +104,12 @@ export default function InvoiceCreate() {
 
       const filtered = allBills.filter(b =>
         b.customerId === customerId &&
-        !b.invoiceId &&               // only uninvoiced
+        !b.invoiceId &&               
         b.date >= fromTs &&
         b.date <= toTs
       );
       filtered.sort((a, b) => a.date - b.date);
       setAvailableBills(filtered);
-      // Auto-select all fetched bills
       setSelectedBillIds(new Set(filtered.map(b => b.id)));
       setFetched(true);
     } catch (err) {
@@ -128,7 +121,6 @@ export default function InvoiceCreate() {
     }
   };
 
-  // ── Re-aggregate whenever selection changes ────────────────────────────────
   useEffect(() => {
     const selected = availableBills.filter(b => selectedBillIds.has(b.id));
     const sortOrder = {};
@@ -159,7 +151,6 @@ export default function InvoiceCreate() {
 
   const totalAmount = aggregatedItems.reduce((s, i) => s + i.total, 0);
 
-  // ── Invoice number generation ──────────────────────────────────────────────
   const generateInvoiceNumber = async () => {
     const now     = new Date();
     const monthKey = format(now, 'yyyyMM');
@@ -179,7 +170,6 @@ export default function InvoiceCreate() {
     return `INV-${monthKey}-${String(newSequence).padStart(3, '0')}`;
   };
 
-  // ── Save invoice ───────────────────────────────────────────────────────────
   const handleGenerateInvoice = async () => {
     if (selectedBillIds.size === 0) {
       alert('Please select at least one bill to include in the invoice.');
@@ -190,7 +180,6 @@ export default function InvoiceCreate() {
       const customer  = customers.find(c => c.id === customerId);
       const invoiceNumber = await generateInvoiceNumber();
 
-      // Save invoice doc
       await setDoc(doc(db, 'invoices', invoiceNumber), {
         invoiceNumber,
         customerId:    customer.id,
@@ -207,7 +196,6 @@ export default function InvoiceCreate() {
         payments:      [],
       });
 
-      // Mark each included bill as invoiced (batch)
       const batch = writeBatch(db);
       for (const billId of selectedBillIds) {
         batch.update(doc(db, 'bills', billId), {
@@ -231,12 +219,11 @@ export default function InvoiceCreate() {
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   if (!dataLoading && isOfflineError) return <OfflineScreen onRetry={loadData} />;
 
   if (dataLoading) {
     return (
-      <div className="card">
+      <div className="card" style={{ display: 'flex', justifyContent: 'center', padding: '40px 20px' }}>
         <div className="loading-pulse">
           <div className="loading-pulse__bar" style={{ width: '40%' }} />
           <div className="loading-pulse__bar" />
@@ -246,178 +233,223 @@ export default function InvoiceCreate() {
     );
   }
 
-  return (
-    <div>
-      {/* Step 1 — Select Customer & Period */}
-      <div className="card">
-        <h2 className="card-title">Generate Monthly Invoice</h2>
+  const selectedCustomer = customers.find(c => c.id === customerId);
 
-        <div className="invoice-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
-          <div className="form-group">
-            <label htmlFor="inv-customer">Customer</label>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
+      {/* Step 1 — Select Customer & Period */}
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <h2 style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '14px', border: 'none' }}>
+          Generate Invoice
+        </h2>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="filter-label" htmlFor="inv-customer">Customer</label>
             <select
               id="inv-customer"
               className="form-control"
               value={customerId}
               onChange={e => { setCustomerId(e.target.value); setFetched(false); setAvailableBills([]); setAggregatedItems([]); setSelectedBillIds(new Set()); }}
+              style={{ fontSize: '0.8rem', height: '36px' }}
             >
-              <option value="">-- Select customer --</option>
+              <option value="">-- Choose Customer --</option>
               {customers.map(c => (
-                <option key={c.id} value={c.id}>{c.name} - {c.phone}</option>
+                <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
           </div>
-          <div className="form-group">
-            <label htmlFor="inv-from">From Date</label>
-            <input
-              id="inv-from"
-              type="date"
-              className="form-control"
-              value={periodFrom}
-              onChange={e => { setPeriodFrom(e.target.value); setFetched(false); }}
-            />
-          </div>
-          <div className="form-group">
-            <label htmlFor="inv-to">To Date</label>
-            <input
-              id="inv-to"
-              type="date"
-              className="form-control"
-              value={periodTo}
-              onChange={e => { setPeriodTo(e.target.value); setFetched(false); }}
-            />
+
+          {selectedCustomer && (
+            <div style={{ background: 'rgba(2, 132, 199, 0.04)', border: '1px solid rgba(2, 132, 199, 0.1)', padding: '10px 12px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--primary)' }}>Customer Details:</span>
+              <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>📞 Phone: <strong>{selectedCustomer.phone || 'N/A'}</strong></span>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="inv-from">From Date</label>
+              <input
+                id="inv-from"
+                type="date"
+                className="form-control"
+                value={periodFrom}
+                onChange={e => { setPeriodFrom(e.target.value); setFetched(false); }}
+                style={{ fontSize: '0.8rem', height: '36px' }}
+              />
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="filter-label" htmlFor="inv-to">To Date</label>
+              <input
+                id="inv-to"
+                type="date"
+                className="form-control"
+                value={periodTo}
+                onChange={e => { setPeriodTo(e.target.value); setFetched(false); }}
+                style={{ fontSize: '0.8rem', height: '36px' }}
+              />
+            </div>
           </div>
         </div>
 
-        <div className="action-row" style={{ marginTop: '8px' }}>
-          <button
-            className="btn btn-primary"
-            onClick={fetchBills}
-            disabled={billsLoading || !customerId || !periodFrom || !periodTo}
-          >
-            {billsLoading ? 'Fetching...' : '🔍 Fetch Uninvoiced Bills'}
-          </button>
-        </div>
+        <button
+          className="btn btn-primary"
+          onClick={fetchBills}
+          disabled={billsLoading || !customerId || !periodFrom || !periodTo}
+          style={{ width: '100%', marginTop: '16px', padding: '10px', fontSize: '0.82rem', borderRadius: '12px', height: '38px' }}
+        >
+          {billsLoading ? 'Fetching Bills...' : 'Fetch Uninvoiced Bills'}
+        </button>
       </div>
 
       {/* Step 2 — Select Bills */}
       {fetched && (
-        <div className="card">
-          <h3 className="card-title">Select Bills to Include</h3>
+        <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h3 style={{ fontSize: '0.94rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+              Select Bills ({availableBills.length})
+            </h3>
+            {availableBills.length > 0 && (
+              <button 
+                type="button" 
+                onClick={toggleAll}
+                style={{ 
+                  background: 'rgba(2, 132, 199, 0.06)', 
+                  border: '1px solid rgba(2, 132, 199, 0.15)', 
+                  color: 'var(--primary)',
+                  fontSize: '0.74rem', 
+                  fontWeight: 700, 
+                  padding: '4px 10px', 
+                  borderRadius: '8px',
+                  cursor: 'pointer'
+                }}
+              >
+                {selectedBillIds.size === availableBills.length ? 'Deselect All' : 'Select All'}
+              </button>
+            )}
+          </div>
 
           {availableBills.length === 0 ? (
-            <p className="text-muted">No uninvoiced bills found for this customer in the selected period.</p>
+            <p className="text-muted" style={{ fontSize: '0.8rem', textAlign: 'center', margin: '10px 0' }}>
+              No uninvoiced bills found for this period.
+            </p>
           ) : (
-            <>
-              <div className="table-responsive">
-                <table className="table card-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '40px' }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedBillIds.size === availableBills.length}
-                          onChange={toggleAll}
-                          style={{ cursor: 'pointer' }}
-                          title="Select all"
-                        />
-                      </th>
-                      <th>Bill #</th>
-                      <th>Date</th>
-                      <th>Items</th>
-                      <th>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {availableBills.map(bill => (
-                      <tr
-                        key={bill.id}
-                        onClick={() => toggleBill(bill.id)}
-                        style={{ cursor: 'pointer', background: selectedBillIds.has(bill.id) ? 'var(--primary-light)' : '' }}
-                      >
-                        <td>
-                          <input
-                            type="checkbox"
-                            checked={selectedBillIds.has(bill.id)}
-                            onChange={() => toggleBill(bill.id)}
-                            onClick={e => e.stopPropagation()}
-                            style={{ cursor: 'pointer' }}
-                          />
-                        </td>
-                        <td style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{bill.billNumber || bill.id}</td>
-                        <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
-                          {bill.date ? format(new Date(bill.date), 'dd MMM yyyy') : ''}
-                        </td>
-                        <td style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>
-                          {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
-                        </td>
-                        <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{formatCurrency(Number(bill.totalAmount))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: '6px' }}>
-                {selectedBillIds.size} of {availableBills.length} bill{availableBills.length > 1 ? 's' : ''} selected
-              </p>
-            </>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '300px', overflowY: 'auto', paddingRight: '2px' }}>
+              {availableBills.map(bill => {
+                const isSelected = selectedBillIds.has(bill.id);
+                return (
+                  <div
+                    key={bill.id}
+                    onClick={() => toggleBill(bill.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '12px 14px',
+                      background: '#ffffff',
+                      borderRadius: '14px',
+                      border: isSelected ? '1.5px solid var(--primary)' : '1px solid rgba(0, 61, 130, 0.04)',
+                      boxShadow: isSelected ? '0 4px 10px rgba(0, 61, 130, 0.04)' : '0 2px 6px rgba(0,0,0,0.01)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      position: 'relative'
+                    }}
+                  >
+                    <div style={{ color: isSelected ? 'var(--primary)' : 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+                      {isSelected ? <CheckSquare size={18} /> : <Square size={18} />}
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                            {bill.billNumber || bill.id}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            Date: {bill.date ? format(new Date(bill.date), 'dd MMM yyyy') : ''}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                          {formatCurrency(Number(bill.totalAmount))}
+                        </div>
+                      </div>
+
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {availableBills.length > 0 && (
+            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '8px', fontWeight: 600 }}>
+              {selectedBillIds.size} of {availableBills.length} bills selected for aggregation
+            </div>
           )}
         </div>
       )}
 
       {/* Step 3 — Consolidated Preview */}
       {aggregatedItems.length > 0 && (
-        <div className="card">
-          <h3 className="card-title">Consolidated Invoice Preview</h3>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-light)', marginBottom: '12px' }}>
-            Items with same service and same rate are merged. Different rates remain separate.
+        <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+          <h3 style={{ fontSize: '0.94rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '4px' }}>
+            Consolidated Preview
+          </h3>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '12px' }}>
+            Identical services and prices are automatically aggregated.
           </p>
 
-          <div className="table-responsive">
-            <table className="table card-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Service</th>
-                  <th>Qty</th>
-                  <th>Rate (₹)</th>
-                  <th>Amount (₹)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {aggregatedItems.map((item, i) => (
-                  <tr key={`${item.id}-${item.unitPrice}`}>
-                    <td style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>{i + 1}</td>
-                    <td style={{ fontWeight: 500 }}>{item.name}</td>
-                    <td style={{ textAlign: 'center' }}>{item.quantity}</td>
-                    <td style={{ textAlign: 'right' }}>{formatCurrency(Number(item.unitPrice))}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatCurrency(Number(item.total))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', paddingRight: '2px' }}>
+            {aggregatedItems.map((item, i) => (
+              <div 
+                key={`${item.id}-${item.unitPrice}`}
+                style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center', 
+                  padding: '8px 10px', 
+                  background: 'var(--surface-overlay)', 
+                  border: '1px solid var(--border-light)',
+                  borderRadius: '10px' 
+                }}
+              >
+                <div>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>{item.name}</span>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                    Qty: <strong>{item.quantity}</strong> @ {formatCurrency(Number(item.unitPrice))} each
+                  </div>
+                </div>
+                <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                  {formatCurrency(Number(item.total))}
+                </span>
+              </div>
+            ))}
           </div>
 
-          <div className="total-section">
-            <div className="total-row grand-total">
-              <span>Invoice Total:</span>
-              <span>{formatCurrency(totalAmount)}</span>
-            </div>
+          <div style={{ background: 'var(--primary-light)', borderRadius: '12px', padding: '10px 12px', marginTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--primary)' }}>Invoice Total:</span>
+            <span style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--primary)' }}>{formatCurrency(totalAmount)}</span>
           </div>
 
-          <div className="action-row" style={{ marginTop: '16px' }}>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => navigate('/invoices')}
+              style={{ flex: 1, padding: '10px', fontSize: '0.8rem', borderRadius: '12px' }}
+            >
+              Cancel
+            </button>
             <button
               className="btn btn-primary"
               onClick={handleGenerateInvoice}
               disabled={saving}
+              style={{ flex: 1.5, padding: '10px', fontSize: '0.8rem', borderRadius: '12px' }}
             >
-              {saving ? 'Generating...' : '📄 Generate & Save Invoice'}
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => navigate('/invoices')}
-            >
-              Cancel
+              {saving ? 'Generating...' : 'Generate Invoice'}
             </button>
           </div>
         </div>

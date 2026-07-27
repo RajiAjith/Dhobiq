@@ -1,15 +1,27 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { doc, getDoc, collection, getDocs, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, storage } from '../firebase';
 import { format } from 'date-fns';
 import { generateInvoicePDF, generateBillPDF } from '../utils/pdfGenerator';
-import { Download, ArrowLeft, Receipt, CreditCard, Edit3, Trash2 } from 'lucide-react';
+import { Download, ArrowLeft, Receipt, CreditCard, Edit3, Trash2, Calendar, Phone, MapPin, Hash, Wallet, ArrowRight, User, Plus } from 'lucide-react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useNetwork, isNetworkError } from '../context/NetworkContext';
 import OfflineScreen from '../components/OfflineScreen';
 import InvoicePaymentModal from '../components/InvoicePaymentModal';
 import { deleteInvoicePayment, getInvoicePaymentEntries, getInvoicePaymentSummary, persistInvoicePayment } from '../utils/paymentUtils';
 import { formatCurrency } from '../utils/currencyFormatter';
+import { useConfirm } from '../components/ConfirmDialog';
+
+const WhatsAppIcon = ({ size = 14 }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.436 2.5 1.173 3.493l-.765 2.793 2.859-.75c.95.518 2.034.814 3.19.814 3.181 0 5.767-2.586 5.768-5.766 0-3.18-2.586-5.766-5.767-5.766zm3.361 8.358c-.143.402-.71.74-1.077.782-.321.037-.738.058-1.189-.086-.282-.09-1.238-.482-2.355-1.478-.89-.794-1.492-1.776-1.666-2.078-.175-.302-.018-.465.132-.614.135-.133.3-.347.45-.522.115-.133.155-.227.233-.378.077-.152.039-.284-.02-.402-.058-.118-.517-1.246-.709-1.707-.186-.448-.377-.387-.517-.394-.133-.007-.286-.008-.439-.008-.153 0-.402.057-.613.284-.211.227-.806.787-.806 1.919s.819 2.228.932 2.381c.115.153 1.611 2.46 3.902 3.45.545.235.97.375 1.302.48.547.174 1.045.15 1.439.091.439-.066 1.353-.553 1.543-1.087.19-.533.19-1.002.133-1.097-.058-.095-.212-.152-.469-.28zM12 .003C5.373.003 0 5.376 0 12c0 2.112.551 4.16 1.597 5.973L.103 23.473l5.698-1.494C7.525 23.107 9.725 23.997 12 23.997c6.627 0 12-5.373 12-11.997C24 5.376 18.627.003 12 .003zM12 22.083c-1.921 0-3.805-.515-5.455-1.488l-.391-.232-3.315.869.885-3.226-.255-.406C2.392 15.748 1.88 13.91 1.88 12c0-5.58 4.54-10.12 10.12-10.12 5.58 0 10.12 4.54 10.12 10.12 0 5.58-4.54 10.12-10.12 10.12z" />
+  </svg>
+);
+
+
+
+
 
 export default function InvoiceDetail() {
   const { id } = useParams();
@@ -27,6 +39,11 @@ export default function InvoiceDetail() {
   const [activePayment, setActivePayment] = useState(null);
 
   const { isOnline, wasOffline, clearWasOffline, reportError } = useNetwork();
+  const [ConfirmUI, confirm] = useConfirm();
+
+  const formatCurrencyNoDecimals = (val) => {
+    return formatCurrency(Math.round(Number(val) || 0)).replace(/\.00$/, '');
+  };
 
   const loadData = useCallback(async () => {
     if (!navigator.onLine) { setIsOfflineError(true); setLoading(false); return; }
@@ -134,15 +151,27 @@ export default function InvoiceDetail() {
         paymentStatus: updatedSummary.paymentStatus
       });
     } catch (error) {
-      console.error('Error saving payment:', error);
-      reportError(error);
+      // Known validation errors (e.g. overpayment) are surfaced in the UI modal.
+      // Only log unexpected/network errors to the console.
+      const isValidationError = error?.message?.toLowerCase().includes('exceed') ||
+                                error?.message?.toLowerCase().includes('invalid') ||
+                                error?.message?.toLowerCase().includes('overpay');
+      if (!isValidationError) {
+        console.error('Error saving payment:', error);
+        reportError(error);
+      }
       throw error;
     }
   };
 
   const handleDeletePayment = async (index) => {
     if (!invoice) return;
-    if (!window.confirm('Delete this payment entry?')) return;
+    const ok = await confirm({
+      title: 'Delete Payment?',
+      message: 'This payment entry will be permanently removed from the invoice.',
+      confirmLabel: 'Delete Payment',
+    });
+    if (!ok) return;
 
     try {
       const updatedSummary = await deleteInvoicePayment({
@@ -169,12 +198,12 @@ export default function InvoiceDetail() {
   const renderStatusBadge = (status) => {
     switch (status) {
       case 'paid':
-        return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#d4edda', color: '#155724', fontSize: '0.75rem', fontWeight: 'bold' }}>Paid</span>;
+        return <span className="badge badge-paid" style={{ fontSize: '0.66rem', padding: '2px 8px' }}>Paid</span>;
       case 'partial':
-        return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#fff3cd', color: '#856404', fontSize: '0.75rem', fontWeight: 'bold' }}>Partial</span>;
+        return <span className="badge badge-partial" style={{ fontSize: '0.66rem', padding: '2px 8px' }}>Partial</span>;
       case 'unpaid':
       default:
-        return <span style={{ padding: '4px 8px', borderRadius: '4px', backgroundColor: '#f8d7da', color: '#721c24', fontSize: '0.75rem', fontWeight: 'bold' }}>Unpaid</span>;
+        return <span className="badge badge-unpaid" style={{ fontSize: '0.66rem', padding: '2px 8px' }}>Unpaid</span>;
     }
   };
 
@@ -182,7 +211,7 @@ export default function InvoiceDetail() {
 
   if (loading) {
     return (
-      <div className="card">
+      <div className="card" style={{ display: 'flex', justifyContent: 'center', padding: '40px 20px' }}>
         <div className="loading-pulse">
           <div className="loading-pulse__bar" style={{ width: '40%' }} />
           <div className="loading-pulse__bar" />
@@ -197,210 +226,424 @@ export default function InvoiceDetail() {
   const periodFrom = invoice.periodFrom ? format(new Date(invoice.periodFrom), 'dd MMM yyyy') : '';
   const periodTo = invoice.periodTo ? format(new Date(invoice.periodTo), 'dd MMM yyyy') : '';
   const paymentHistory = Array.isArray(invoice.payments) ? invoice.payments : [];
+  const isFullyPaid = (invoice.balanceAmount ?? invoice.totalAmount) <= 0;
 
   return (
-    <div>
-      <div className="flex-between mb-2">
-        <button className="btn btn-secondary" onClick={() => navigate('/invoices')}>
-          <ArrowLeft size={16} /> Back
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '20px' }}>
+      {ConfirmUI}
+      {/* Top Header Actions */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button 
+          className="btn btn-secondary" 
+          onClick={() => navigate('/invoices')}
+          style={{ padding: '8px 14px', fontSize: '0.78rem', minHeight: '34px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+        >
+          <ArrowLeft size={14} /> Back
         </button>
-        <button className="btn btn-primary" onClick={handleDownloadInvoicePDF}>
-          <Download size={16} /> Download Invoice PDF
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button 
+            className="btn btn-primary" 
+            onClick={handleDownloadInvoicePDF}
+            style={{ padding: '8px 14px', fontSize: '0.78rem', minHeight: '34px', borderRadius: '10px', display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(2, 132, 199, 0.06)', color: 'var(--primary)', border: '1px solid rgba(2, 132, 199, 0.15)' }}
+          >
+            <Download size={14} /> PDF
+          </button>
+          
+          {(() => {
+            const rawPhone = customer?.phone || '';
+            const hasPhone = !!rawPhone.trim();
+            
+            // Clean phone digits function
+            const cleanPhone = (phone) => {
+              const firstPhone = phone.split(',')[0].trim();
+              const digits = firstPhone.replace(/\D/g, '');
+              if (!digits) return '';
+              if (digits.length === 10) return '91' + digits;
+              return digits;
+            };
+
+            const phone = hasPhone ? cleanPhone(rawPhone) : '';
+            const isPhoneValid = !!phone;
+            const formattedStatus = String(invoice.paymentStatus || invoice.status || 'unpaid').toUpperCase();
+
+            if (isPhoneValid) {
+              return (
+                <button 
+                  onClick={() => {
+                    // Encode invoice & customer payload in base64 URL query parameter
+                    const payload = {
+                      type: 'invoice',
+                      invoice: {
+                        id: invoice.id,
+                        invoiceNumber: invoice.invoiceNumber || invoice.id,
+                        invoiceDate: invoice.invoiceDate,
+                        periodFrom: invoice.periodFrom || '',
+                        periodTo: invoice.periodTo || '',
+                        totalAmount: invoice.totalAmount,
+                        amountPaid: invoice.amountPaid || 0,
+                        balanceAmount: invoice.balanceAmount ?? invoice.totalAmount,
+                        paymentStatus: invoice.paymentStatus || invoice.status || 'unpaid',
+                        items: invoice.items || []
+                      },
+                      customer: {
+                        name: customer?.name || '',
+                        phone: customer?.phone || '',
+                        address: customer?.address || ''
+                      },
+                      bills: (invoice.billIds || []).map(id => ({ id }))
+                    };
+                    const base64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+                    const shareUrl = `${window.location.origin}/share?d=${base64}`;
+                    const text = `*Dhobiq Laundry*\n\nHello, your invoice *${invoice.invoiceNumber || invoice.id}* has been generated.\n*Date:* ${invoice.invoiceDate ? format(new Date(invoice.invoiceDate), 'dd MMM yyyy') : ''}\n*Total Amount:* ${formatCurrency(invoice.totalAmount).replace(/\.00$/, '')}\n*Amount Paid:* ${formatCurrency(invoice.amountPaid || 0).replace(/\.00$/, '')}\n*Balance:* ${formatCurrency(invoice.balanceAmount ?? invoice.totalAmount).replace(/\.00$/, '')}\n*Status:* ${formattedStatus}\n\nThank you for choosing Dhobiq!\n\n*Click to view/download PDF:* ${shareUrl}`;
+                    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+                  }}
+                  className="btn btn-primary" 
+                  style={{ 
+                    padding: '8px 14px', 
+                    fontSize: '0.78rem', 
+                    minHeight: '34px', 
+                    borderRadius: '10px', 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: '4px', 
+                    background: 'rgba(37, 211, 102, 0.06)', 
+                    color: '#15803d', 
+                    border: '1px solid rgba(37, 211, 102, 0.15)',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                  title="Send Invoice via WhatsApp"
+                >
+                  <WhatsAppIcon size={14} /> Send
+                </button>
+              );
+            } else {
+              return (
+                <button 
+                  disabled
+                  className="btn btn-primary" 
+                  style={{ 
+                    padding: '8px 14px', 
+                    fontSize: '0.78rem', 
+                    minHeight: '34px', 
+                    borderRadius: '10px', 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: '4px', 
+                    background: 'rgba(0, 0, 0, 0.02)', 
+                    color: 'var(--text-disabled)', 
+                    border: '1px solid rgba(0, 0, 0, 0.05)',
+                    opacity: 0.45,
+                    cursor: 'not-allowed'
+                  }}
+                  title="No customer contact number added"
+                >
+                  <WhatsAppIcon size={14} /> Send
+                </button>
+              );
+            }
+          })()}
+        </div>
       </div>
 
-      <div className="card">
-        <div className="invoice-detail-header">
+      {/* Invoice Overview Card */}
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <h2 className="card-title" style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              {invoice.invoiceNumber || invoice.id}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                {invoice.invoiceNumber || invoice.id}
+              </span>
               {renderStatusBadge(invoice.paymentStatus || invoice.status)}
-            </h2>
-            <p style={{ color: 'var(--text-light)', fontSize: '0.85rem' }}>
-              Date: <strong>{invoice.invoiceDate ? format(new Date(invoice.invoiceDate), 'dd MMM yyyy') : ''}</strong>
-              {periodFrom && periodTo && (
-                <> &nbsp;·&nbsp; Period: <strong>{periodFrom} – {periodTo}</strong></>
-              )}
-            </p>
+            </div>
+            
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+              Invoice Date: <strong>{invoice.invoiceDate ? format(new Date(invoice.invoiceDate), 'dd MMM yyyy') : ''}</strong>
+            </div>
+            {periodFrom && periodTo && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Billing Period: <strong>{periodFrom} – {periodTo}</strong>
+              </div>
+            )}
           </div>
-          <div className="invoice-detail-total">
-            <span className="text-muted" style={{ fontSize: '0.85rem' }}>Total Amount</span>
-            <span style={{ fontSize: '1.6rem', fontWeight: 700, color: 'var(--primary)' }}>
+          <div style={{ textAlign: 'right' }}>
+            <span className="text-muted" style={{ fontSize: '0.68rem', display: 'block' }}>Total Amount</span>
+            <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary)' }}>
               {formatCurrency(Number(invoice.totalAmount))}
             </span>
           </div>
         </div>
 
-        <div className="detail-info-grid">
-          <div className="detail-info-block">
-            <span className="detail-label">Customer</span>
-            <span className="detail-value">{customer?.name || invoice.customerName}</span>
+        {/* Customer Information Drawer Block */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--surface-overlay)', border: '1px solid var(--border-light)', borderRadius: '12px', padding: '10px 12px', marginTop: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.76rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+            <User size={13} style={{ color: 'var(--primary)' }} />
+            <span>Customer: {customer?.name || invoice.customerName}</span>
           </div>
           {customer?.phone && (
-            <div className="detail-info-block">
-              <span className="detail-label">Phone</span>
-              <span className="detail-value">{customer.phone}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+              <Phone size={11} style={{ color: 'var(--text-muted)' }} />
+              <span>Phone: {customer.phone}</span>
             </div>
           )}
           {customer?.address && (
-            <div className="detail-info-block">
-              <span className="detail-label">Address</span>
-              <span className="detail-value">{customer.address}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+              <MapPin size={11} style={{ color: 'var(--text-muted)' }} />
+              <span>Address: {customer.address}</span>
             </div>
           )}
           {customer?.id && (
-            <div className="detail-info-block">
-              <span className="detail-label">Customer ID</span>
-              <span className="detail-value" style={{ fontFamily: 'monospace' }}>{customer.id}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>
+              <Hash size={11} style={{ color: 'var(--text-muted)' }} />
+              <span style={{ fontFamily: 'monospace' }}>ID: {customer.id}</span>
             </div>
           )}
         </div>
       </div>
 
-      <div className="card">
-        <h3 className="card-title">Consolidated Items</h3>
-        <div className="table-responsive">
-          <table className="table card-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Service</th>
-                <th>Qty</th>
-                <th>Rate (₹)</th>
-                <th>Amount (₹)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(invoice.items || []).map((item, i) => (
-                <tr key={`${item.id}-${item.unitPrice}`}>
-                  <td style={{ color: 'var(--text-light)', fontSize: '0.82rem' }}>{i + 1}</td>
-                  <td style={{ fontWeight: 500 }}>{item.name}</td>
-                  <td style={{ textAlign: 'center' }}>{item.quantity}</td>
-                  <td style={{ textAlign: 'right' }}>{formatCurrency(Number(item.unitPrice))}</td>
-                  <td style={{ textAlign: 'right', fontWeight: 500 }}>{formatCurrency(Number(item.total))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="total-section">
-          <div className="total-row">
-            <span>Total Amount:</span>
-            <span>{formatCurrency(Number(invoice.totalAmount))}</span>
-          </div>
-          <div className="total-row" style={{ color: 'var(--success)' }}>
-            <span>Amount Paid:</span>
-            <span>{formatCurrency(Number(invoice.amountPaid || 0))}</span>
-          </div>
-          <div className="total-row grand-total" style={{ color: 'var(--danger)' }}>
-            <span>Balance Due:</span>
-            <span>{formatCurrency(Number(invoice.balanceAmount ?? invoice.totalAmount))}</span>
-          </div>
+      {/* Pricing Summary Columns & payment CTAs */}
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px', border: 'none' }}>
+          Invoice Summary
+        </h3>
 
-          {(invoice.balanceAmount ?? invoice.totalAmount) > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
-              <button onClick={openAddPaymentModal} className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <CreditCard size={16} /> Add Payment
-              </button>
+        <div className="amount-grid" style={{ marginBottom: '14px' }}>
+          <div className="amount-grid-cell">
+            <div className="amount-grid-label">Total</div>
+            <div className="amount-grid-value" style={{ color: 'var(--primary)' }}>
+              {formatCurrencyNoDecimals(invoice.totalAmount)}
             </div>
-          )}
+          </div>
+          <div className="amount-grid-cell">
+            <div className="amount-grid-label">Paid</div>
+            <div className="amount-grid-value" style={{ color: 'var(--success)' }}>
+              {formatCurrencyNoDecimals(invoice.amountPaid || 0)}
+            </div>
+          </div>
+          <div className="amount-grid-cell">
+            <div className="amount-grid-label">Balance</div>
+            <div className="amount-grid-value" style={{ color: 'var(--danger)' }}>
+              {formatCurrencyNoDecimals(invoice.balanceAmount ?? invoice.totalAmount)}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="card">
-        <div className="flex-between mb-2">
-          <h3 className="card-title" style={{ margin: 0 }}>Payment History</h3>
-          <button onClick={openAddPaymentModal} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <CreditCard size={16} /> Record Payment
+      {/* Consolidated Services List */}
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '10px', border: 'none' }}>
+          Consolidated Services
+        </h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {(invoice.items || []).map((item, i) => (
+            <div 
+              key={`${item.id}-${item.unitPrice}`}
+              style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                padding: '8px 10px', 
+                background: 'var(--surface-overlay)', 
+                border: '1px solid var(--border-light)',
+                borderRadius: '10px' 
+              }}
+            >
+              <div>
+                <span style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--text-primary)' }}>{item.name}</span>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                  Qty: <strong>{item.quantity}</strong> @ {formatCurrency(Number(item.unitPrice))} each
+                </div>
+              </div>
+              <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                {formatCurrency(Number(item.total))}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Payment Payout History Cards */}
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
+            Payment History
+          </h3>
+          <button 
+            onClick={isFullyPaid ? undefined : openAddPaymentModal}
+            disabled={isFullyPaid}
+            title={isFullyPaid ? 'Invoice is fully paid' : 'Add a payment'}
+            style={{ 
+              background: isFullyPaid ? 'rgba(0,0,0,0.04)' : 'rgba(2, 132, 199, 0.06)', 
+              border: `1px solid ${isFullyPaid ? 'transparent' : 'rgba(2, 132, 199, 0.15)'}`, 
+              color: isFullyPaid ? 'var(--text-disabled)' : 'var(--primary)',
+              fontSize: '0.74rem', 
+              fontWeight: 700, 
+              padding: '4px 10px', 
+              borderRadius: '8px',
+              cursor: isFullyPaid ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              opacity: isFullyPaid ? 0.45 : 1,
+            }}
+          >
+            <Plus size={12} /> Add Payment
           </button>
         </div>
 
         {paymentHistory.length === 0 ? (
-          <p className="text-muted">No payment history recorded yet.</p>
+          <p className="text-muted" style={{ fontSize: '0.8rem', textAlign: 'center', margin: '10px 0' }}>
+            No payment payouts recorded yet.
+          </p>
         ) : (
-          <div className="table-responsive">
-            <table className="table card-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Amount</th>
-                  <th>Mode</th>
-                  <th>Reference</th>
-                  <th>Notes</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paymentHistory.map((payment, index) => (
-                  <tr key={`${payment.createdAt || index}-${index}`}>
-                    <td>{payment.paymentDate ? format(new Date(payment.paymentDate), 'dd MMM yyyy') : ''}</td>
-                    <td>{formatCurrency(Number(payment.amount || 0))}</td>
-                    <td>{payment.paymentMode || 'Unknown'}</td>
-                    <td>{payment.referenceNumber || '—'}</td>
-                    <td style={{ maxWidth: '220px', whiteSpace: 'normal' }}>{payment.notes || '—'}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <button onClick={() => openEditPaymentModal(payment, index)} className="btn-icon" title="Edit Payment">
-                          <Edit3 size={16} />
-                        </button>
-                        <button onClick={() => handleDeletePayment(index)} className="btn-icon delete" title="Delete Payment">
-                          <Trash2 size={16} />
-                        </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {paymentHistory.map((payment, index) => (
+              <div 
+                key={`${payment.createdAt || index}-${index}`}
+                style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column',
+                  padding: '10px 12px',
+                  background: '#ffffff',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(0, 61, 130, 0.04)',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.01)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.06)', color: '#10b981', width: '28px', height: '28px', borderRadius: '8px', display: 'flex', alignItems: 'center', justify: 'center', flexShrink: 0, justifyContent: 'center' }}>
+                      <Wallet size={14} />
+                    </div>
+                    <div>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                        {payment.paymentMode || 'Payment'}
+                      </span>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        Date: {payment.paymentDate ? format(new Date(payment.paymentDate), 'dd MMM yyyy') : ''}
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </div>
+                  </div>
+                  
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--success)' }}>
+                      +{formatCurrency(Number(payment.amount || 0))}
+                    </span>
+                    {payment.referenceNumber && (
+                      <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        Ref: {payment.referenceNumber}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {payment.notes && (
+                  <div style={{ marginTop: '8px', background: 'var(--surface-overlay)', padding: '6px 8px', borderRadius: '6px', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                    {payment.notes}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid rgba(0,61,130,0.03)', marginTop: '8px', paddingTop: '6px' }}>
+                  <button 
+                    onClick={() => openEditPaymentModal(payment, index)} 
+                    className="btn-icon" 
+                    style={{ 
+                      width: '26px', height: '26px', minWidth: '26px',
+                      background: 'rgba(245, 158, 11, 0.06)', border: '1px solid rgba(245, 158, 11, 0.15)', color: '#d97706', borderRadius: '6px'
+                    }} 
+                    title="Edit Payment"
+                  >
+                    <Edit3 size={12} />
+                  </button>
+                  <button 
+                    onClick={() => handleDeletePayment(index)} 
+                    className="btn-icon" 
+                    style={{ 
+                      width: '26px', height: '26px', minWidth: '26px',
+                      background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: '6px'
+                    }} 
+                    title="Delete Payment"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      <div className="card">
-        <h3 className="card-title">Included Bills ({includedBills.length})</h3>
+      {/* Linked Bills Cards */}
+      <div className="card" style={{ padding: '16px', borderRadius: '16px', margin: 0 }}>
+        <h3 style={{ fontSize: '0.92rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px', border: 'none' }}>
+          Included Bills ({includedBills.length})
+        </h3>
+        
         {includedBills.length === 0 ? (
-          <p className="text-muted">No bills linked.</p>
+          <p className="text-muted" style={{ fontSize: '0.8rem', textAlign: 'center' }}>No bills linked.</p>
         ) : (
-          <div className="table-responsive">
-            <table className="table card-table">
-              <thead>
-                <tr>
-                  <th>Bill #</th>
-                  <th>Date</th>
-                  <th>Items</th>
-                  <th>Amount</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {includedBills.map(bill => (
-                  <tr key={bill.id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {includedBills.map(bill => (
+              <div 
+                key={bill.id}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: '10px 12px',
+                  background: '#ffffff',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(0, 61, 130, 0.04)',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.01)'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
                       {bill.billNumber || bill.id}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
-                      {bill.date ? format(new Date(bill.date), 'dd MMM yyyy') : ''}
-                    </td>
-                    <td style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>
-                      {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
-                    </td>
-                    <td style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>
+                    </span>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      Date: {bill.date ? format(new Date(bill.date), 'dd MMM yyyy') : ''}
+                    </div>
+                  </div>
+                  
+                  <div style={{ textAlign: 'right' }}>
+                    <span style={{ fontSize: '0.84rem', fontWeight: 800, color: 'var(--text-primary)' }}>
                       {formatCurrency(Number(bill.totalAmount))}
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button onClick={() => handleDownloadBillPDF(bill)} className="btn-icon" title="Download Bill PDF">
-                          <Download size={16} />
-                        </button>
-                        <Link to={`/bills/${bill.id}/edit`} className="btn-icon" title="View Bill" style={{ opacity: 0.6 }}>
-                          <Receipt size={16} />
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {(bill.items || []).filter(i => i.quantity > 0).map(i => `${i.name} ×${i.quantity}`).join(', ')}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid rgba(0,61,130,0.03)', marginTop: '8px', paddingTop: '6px' }}>
+                  <button 
+                    onClick={() => handleDownloadBillPDF(bill)} 
+                    className="btn-icon" 
+                    style={{ 
+                      width: '28px', height: '28px', minWidth: '28px',
+                      background: 'rgba(2, 132, 199, 0.06)', border: '1px solid rgba(2, 132, 199, 0.15)', color: '#0284c7', borderRadius: '8px'
+                    }} 
+                    title="Download Bill PDF"
+                  >
+                    <Download size={13} />
+                  </button>
+                  <Link 
+                    to={`/bills/${bill.id}/edit`} 
+                    className="btn-icon" 
+                    style={{ 
+                      width: '28px', height: '28px', minWidth: '28px',
+                      background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.15)', color: '#8b5cf6', borderRadius: '8px',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
+                    }} 
+                    title="View Bill Details"
+                  >
+                    <Receipt size={13} />
+                  </Link>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
